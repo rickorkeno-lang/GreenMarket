@@ -10,7 +10,8 @@ import { SellerCardBuilder } from "../builders/SellerCardBuilder";
  *  формирует SellerCardAdapter): START_ROUTE/TOGGLE_FAVORITE_SELLER/
  *  REPORT_MISSING_PRODUCT — кнопки; OPEN_PRODUCT/TOGGLE_OTHER_PRODUCTS/
  *  RETRY_SELLER_LOAD — действия из содержимого карточки; BACK/GO_TO_MAIN —
- *  универсальная навигация Bottom Sheet.
+ *  универсальная навигация Bottom Sheet; OPEN_SELLER — переход на страницу
+ *  другого продавца из блока «Похожие продавцы» (SellerCardScreenView).
  *
  *  REPORT_PRICE_CHANGE и SHARE_SELLER есть в общем Action Catalog
  *  (contracts/Action.ts), но пока нигде не диспатчатся с этого экрана —
@@ -27,5 +28,6 @@ export const SellerCardScreen: ScreenDefinition<SellerCardViewModel> = {
     "RETRY_SELLER_LOAD",
     "BACK",
     "GO_TO_MAIN",
+    "OPEN_SELLER",
   ] as const,
 };

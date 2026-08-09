@@ -32,3 +32,13 @@ export interface ProductRecord {
    *  порядок и визуальную пометку строки. Backend вычисляет, не React. */
   availability?: "available" | "replacement" | "missing";
 }
+
+/** ТЗ-025 v1.1 §6: фиксированный порядок товаров продавца — доступные →
+ *  замены → отсутствующие. Общий для того места, где производится сортировка
+ *  (MockSellerRepository), и того, где список рендерится (SellerCardAdapter) —
+ *  единый источник, чтобы порядок не разошёлся между данными и разметкой. */
+export const PRODUCT_AVAILABILITY_ORDER: Record<NonNullable<ProductRecord["availability"]>, number> = {
+  available: 0,
+  replacement: 1,
+  missing: 2,
+};

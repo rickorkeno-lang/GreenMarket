@@ -240,6 +240,142 @@ async function run() {
   assert.equal(notFound, null, "searchSellerByName возвращает null при промахе");
   assert.equal(MapRuntime.getState().searchResult?.length, 0, "searchSellerByName при промахе очищает searchResult");
 
+  // ---- Автодополнение строки поиска (MAP-019) ----
+
+  // requestSearchSuggestions: оптимистичный START применяется сразу (спиннер
+  // в дропдауне виден с первого символа), подсказки заполняют состояние после
+  // дебаунса + задержки Repository.
+  MapRuntime.requestSearchSuggestions("мед");
+  assert.equal(
+    MapRuntime.getState().searchSuggestions.query,
+    "мед",
+    "requestSearchSuggestions применяет query сразу (оптимистичный START)",
+  );
+  assert.equal(
+    MapRuntime.getState().searchSuggestions.loading,
+    true,
+    "requestSearchSuggestions помечает загрузку подсказок",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  s = MapRuntime.getState();
+  assert.equal(s.searchSuggestions.query, "мед", "подсказки получены для введённого запроса");
+  assert.equal(s.searchSuggestions.loading, false, "загрузка подсказок завершена");
+  assert.ok(
+    s.searchSuggestions.suggestions.some((x) => x.name === "Медовый край"),
+    "по запросу «мед» находится «Медовый край» (подстрока, «ё» = «е»)",
+  );
+  assert.ok(
+    s.searchSuggestions.suggestions.some((x) => x.name === "Цветочный мёд"),
+    "по запросу «мед» находится «Цветочный мёд»",
+  );
+
+  // Дебаунс схлопывает серию быстрого ввода в один запрос: ответ последнего
+  // запроса не перетирается ответом более раннего (seq-защита от гонок).
+  MapRuntime.requestSearchSuggestions("мёд");
+  MapRuntime.requestSearchSuggestions("медовый");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  s = MapRuntime.getState();
+  assert.equal(
+    s.searchSuggestions.query,
+    "медовый",
+    "после серии ввода подсказки соответствуют последнему запросу",
+  );
+  assert.ok(
+    s.searchSuggestions.suggestions.every((x) => x.name === "Медовый край"),
+    "ответ более раннего запроса не перетёр подсказки последнего",
+  );
+
+  // Пустой запрос (в т.ч. из пробелов) сбрасывает подсказки — дропдаун
+  // закрывается, устаревшие подсказки не остаются в состоянии.
+  MapRuntime.requestSearchSuggestions("   ");
+  s = MapRuntime.getState();
+  assert.equal(s.searchSuggestions.query, "", "пустой запрос очищает query подсказок");
+  assert.equal(s.searchSuggestions.suggestions.length, 0, "пустой запрос очищает список подсказок");
+
+  // clearSearchSuggestions (выбор продавца из дропдауна): отменяет отложенный
+  // запрос, сбрасывает состояние и не даёт позднему ответу вернуть подсказки.
+  MapRuntime.requestSearchSuggestions("мед");
+  MapRuntime.clearSearchSuggestions();
+  s = MapRuntime.getState();
+  assert.equal(s.searchSuggestions.query, "", "clearSearchSuggestions сбрасывает query");
+  assert.equal(s.searchSuggestions.loading, false, "clearSearchSuggestions снимает загрузку");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  s = MapRuntime.getState();
+  assert.equal(s.searchSuggestions.loading, false, "отложенный запрос подсказок отменён");
+  assert.equal(s.searchSuggestions.suggestions.length, 0, "поздний ответ подсказок не применён");
+
+  // ---- Подсказки уважают глобальный фильтр (единая сущность) ----
+
+  // Без фильтра по запросу «мед» в подсказки попадают обе мёд-лавки.
+  MapRuntime.requestSearchSuggestions("мед");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  s = MapRuntime.getState();
+  assert.equal(s.searchSuggestions.rawSuggestions.length, 2, "без фильтра в rawSuggestions обе мёд-лавки");
+  assert.equal(s.searchSuggestions.suggestions.length, 2, "без фильтра видимы обе подсказки");
+
+  // Включаем фильтр «Овощи и фрукты»: «Цветочный мёд» (зелень/молочные)
+  // отсекается, «Медовый край» (овощи) остаётся. Repository не перезапрашивался —
+  // пересчёт локальный, из тех же rawSuggestions.
+  MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "category", optionIds: [veg] });
+  s = MapRuntime.getState();
+  assert.deepEqual(
+    s.searchSuggestions.suggestions.map((x) => x.name),
+    ["Медовый край"],
+    "смена фильтра пересчитывает подсказки: остаётся только «Медовый край»",
+  );
+  assert.equal(s.searchSuggestions.rawSuggestions.length, 2, "rawSuggestions не меняется от смены фильтра");
+
+  // Другой фильтр — другая подсказка: «Молочные продукты» оставляют
+  // «Цветочный мёд» (молочные), а «Медовый край» отсекается.
+  MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "category", optionIds: [dairy] });
+  s = MapRuntime.getState();
+  assert.deepEqual(
+    s.searchSuggestions.suggestions.map((x) => x.name),
+    ["Цветочный мёд"],
+    "подсказки пересчитаны под новый фильтр",
+  );
+
+  // Группа «Состояние» применяется так же: «только доступные» отсекает
+  // недоступный «Цветочный мёд» (i%11 = 0), «Медовый край» (доступен, закрыт)
+  // остаётся.
+  MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "category", optionIds: [] });
+  MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "state", optionIds: ["available"] });
+  s = MapRuntime.getState();
+  assert.deepEqual(
+    s.searchSuggestions.suggestions.map((x) => x.name),
+    ["Медовый край"],
+    "фильтр «только доступные» отсекает недоступный «Цветочный мёд»",
+  );
+
+  // Группы складываются (И) и для подсказок: овощи + «только открытые» — обе
+  // мёд-лавки отсечены, но rawSuggestions не пусты: по запросу что-то нашлось,
+  // отсеяно фильтром, а не промах запроса (дропдаун объясняет это пользователю).
+  MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "category", optionIds: [veg] });
+  MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "state", optionIds: ["open"] });
+  s = MapRuntime.getState();
+  assert.equal(
+    s.searchSuggestions.suggestions.length,
+    0,
+    "овощи + только открытые: «Медовый край» закрыт, «Цветочный мёд» не овощи — пусто",
+  );
+  assert.equal(
+    s.searchSuggestions.rawSuggestions.length,
+    2,
+    "rawSuggestions сохранены: отсеяно фильтром, а не промах запроса",
+  );
+
+  // Свежий ответ Repository при активном фильтре фильтруется так же.
+  MapRuntime.requestSearchSuggestions("мед");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  s = MapRuntime.getState();
+  assert.equal(s.searchSuggestions.rawSuggestions.length, 2, "повторный запрос даёт сырые подсказки");
+  assert.equal(s.searchSuggestions.suggestions.length, 0, "свежие подсказки тоже отфильтрованы");
+
+  // Сбрасываем фильтры и подсказки, чтобы дальше считалось без помех.
+  MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "category", optionIds: [] });
+  MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "state", optionIds: [] });
+  MapRuntime.clearSearchSuggestions();
+
   // requestVisibleSellers: после debounce помечает загрузку и наполняет
   // видимый список (debounce 500ms + имитация задержки Repository 250ms).
   MapRuntime.requestVisibleSellers({ north: 51, south: 50, east: 9, west: 8 });

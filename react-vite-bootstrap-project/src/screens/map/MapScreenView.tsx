@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Content, Header, Row, Stack } from '@/layout';
 import { Text, IconButton, Icon, BottomSheetSurface, Snackbar } from '@/design-system/components';
 import { BottomSheetContainer, SnackbarContainer } from '@/containers';
@@ -10,9 +10,10 @@ import type { CameraChangeReason } from '@/platform-core/map/gis/MapAdapterTypes
 import { MapBuilder } from '@/platform-core/map/builders/MapBuilder';
 import { DEFAULT_SELLER_SEARCH_RADIUS_METERS, MapRuntime } from '@/platform-core/map/runtime/MapRuntime';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
-import type { CameraParams, GeoPoint, MapBounds, MapViewModel } from '@/platform-core/map/viewmodels/MapViewModel';
+import type { CameraParams, GeoPoint, MapBounds, MapViewModel, SellerMapRecord } from '@/platform-core/map/viewmodels/MapViewModel';
 import { MapBottomSheetContent } from '@/screens/map/MapBottomSheetContent';
 import { MapFabButton } from '@/screens/map/MapFabButton';
+import { MapSearchAutocomplete } from '@/screens/map/MapSearchAutocomplete';
 import { SellerFilter } from '@/screens/filter/SellerFilter';
 
 /** Зум при центрировании на конкретного продавца (поиск / выбор из списка). */
@@ -38,8 +39,9 @@ function parseRadiusKmToMeters(value: string): number | null {
  *  через useSyncExternalStore и является чистым отображением — сам не хранит
  *  ни выбранного продавца, ни камеру, ни Bottom Sheet, ни результаты поиска.
  *  Асинхронные потоки (загрузка продавцов, геокодирование, поиск/радиус
- *  мастера) с debounce и защитой от гонок живут в MapRuntime (методы
- *  requestVisibleSellers / scheduleSellerSearch и т.д.); геолокация — в
+ *  мастера, автодополнение строки поиска) с debounce и защитой от гонок живут
+ *  в MapRuntime (методы requestVisibleSellers / scheduleSellerSearch /
+ *  requestSearchSuggestions и т.д.); геолокация — в
  *  GeoService#resolveUserLocation.
  *  Локальное состояние — только поля ввода пользователя (поиск и радиус
  *  мастера «Поиск продавцов»), токен центрирования карты и snackbar об
@@ -258,10 +260,12 @@ export function MapScreenView() {
     [handleOpenSellerCard, handleSelectListSeller, handleSearchOriginMyLocation, handleSearchOriginMapCenter],
   );
 
+  /** Сабмит строки поиска (Enter без подсвеченной подсказки, MAP-053): первое
+   *  совпадение по названию центрирует карту и открывает Bottom Sheet. Основной
+   *  путь выбора при автодополнении — handleSearchSuggestionSelect (MAP-019). */
   const handleSearchSubmit = useCallback(
-    async (event: FormEvent) => {
-      event.preventDefault();
-      const query = searchQuery.trim();
+    async (rawQuery: string) => {
+      const query = rawQuery.trim();
       if (!query) return;
       const found = await MapRuntime.searchSellerByName(query);
       if (found) {
@@ -272,7 +276,29 @@ export function MapScreenView() {
         setCenterRequestToken((t) => t + 1);
       }
     },
-    [searchQuery, dispatch],
+    [dispatch],
+  );
+
+  /** Изменение текста строки поиска: локальное состояние поля + запрос
+   *  подсказок в MapRuntime (с дебаунсом и защитой от гонок, MAP-019). */
+  const handleSearchQueryChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    MapRuntime.requestSearchSuggestions(value);
+  }, []);
+
+  /** Выбор продавца из дропдауна автодополнения (MAP-019): центрирование
+   *  карты, открытие Bottom Sheet и подстановка полного названия в поле поиска
+   *  (подсказки сбрасываются, дропдаун закрывается). */
+  const handleSearchSuggestionSelect = useCallback(
+    (seller: SellerMapRecord) => {
+      setSearchQuery(seller.name);
+      MapRuntime.clearSearchSuggestions();
+      MapRuntime.dispatch({ type: 'MOVE_MAP', center: seller.location, zoom: ZOOM_ON_SELLER });
+      MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: seller.sellerId });
+      dispatch({ type: 'SELECT_SELLER', payload: { sellerId: seller.sellerId } });
+      setCenterRequestToken((t) => t + 1);
+    },
+    [dispatch],
   );
 
   const camera: CameraParams = useMemo(
@@ -289,6 +315,7 @@ export function MapScreenView() {
       camera,
       bottomSheet: mapState.bottomSheet,
       sellerSearch: mapState.sellerSearch,
+      searchSuggestions: mapState.searchSuggestions,
       currentAreaLabel: mapState.currentAreaLabel,
     }),
     [mapState, camera],
@@ -303,30 +330,15 @@ export function MapScreenView() {
           <Text variant="title" as="span">
             🌿 GreenMarket
           </Text>
-          <form
-            onSubmit={(e) => void handleSearchSubmit(e)}
-            style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 360 }}
-          >
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Найти продавца"
-              aria-label="Поиск продавца"
-              data-testid="map-search"
-              style={{
-                width: '100%',
-                height: 36,
-                borderRadius: 'var(--radius-full)',
-                border: '1px solid var(--color-border-default)',
-                padding: '0 var(--space-md)',
-                fontFamily: 'var(--font-family-body)',
-                fontSize: 'var(--font-size-sm)',
-                background: 'var(--color-surface-sunken)',
-                color: 'var(--color-text-primary)',
-              }}
+          <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 360 }}>
+            <MapSearchAutocomplete
+              query={searchQuery}
+              suggestionsState={mapState.searchSuggestions}
+              onQueryChange={handleSearchQueryChange}
+              onSelect={handleSearchSuggestionSelect}
+              onSubmit={(query) => void handleSearchSubmit(query)}
             />
-          </form>
+          </div>
           <Row gap="sm">
             <SellerFilter
               categories={mapState.categories}

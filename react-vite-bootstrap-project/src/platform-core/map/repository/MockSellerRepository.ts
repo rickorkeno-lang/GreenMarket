@@ -1,5 +1,5 @@
 import { asSellerId, type SellerId } from "@/platform-core/contracts/Action";
-import { asCategoryId } from "@/platform-core/contracts/DomainTypes";
+import { asCategoryId, PRODUCT_AVAILABILITY_ORDER } from "@/platform-core/contracts/DomainTypes";
 import type { GeoPoint, MapBounds, SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
 import type {
   CategoryOption,
@@ -9,6 +9,14 @@ import type {
 } from "@/platform-core/map/repository/SellerRepository";
 import { GeoService } from "@/platform-core/map/gis/GeoService";
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
+import { DistanceFormatter } from "@/platform-core/formatting/DistanceFormatter";
+import type { SellerCardViewModel } from "@/platform-core/viewmodels/SellerCardViewModel";
+import type { AvailableAction, PhotoItem } from "@/platform-core/contracts/ContentBlock";
+import { buildSellerProducts, type SellerProductRecord } from "@/platform-core/map/repository/mockSellerCatalog";
+import {
+  rankRecommendedSellers,
+  type RecommendedSeller,
+} from "@/platform-core/map/recommendations/SellerRecommendations";
 
 /** IMP-003.1 §14: 20-50 продавцов, разные категории, координаты в пределах
  *  тестовой территории, рейтинги, фото (плейсхолдеры — как и в остальном
@@ -100,6 +108,34 @@ function normalizeForSearch(value: string): string {
   return value.trim().toLowerCase().replace(/ё/g, "е");
 }
 
+/** Цвета-заглушки превью лавки (реальных фото нет, см. PhotoItem#placeholderColor). */
+const PHOTO_PLACEHOLDERS = ["#e4f0e8", "#fbedd9", "#e1eef4"];
+
+/** ТЗ-025 v1.1 §7: детерминированные уровни доверия по индексу продавца. */
+const TRUST_LEVELS = ["high", "high", "medium", "low"] as const;
+
+/** Кнопки действий карточки продавца — как в SellerCardScreen.availableActions
+ *  (только те, что реально диспатчатся: маршрут, избранное, репорт). */
+function sellerCardAvailableActions(sellerId: SellerId): AvailableAction[] {
+  return [
+    { id: "start-route", action: { type: "START_ROUTE" }, label: "Начать маршрут", icon: "navigation", variant: "primary" },
+    {
+      id: "favorite",
+      action: { type: "TOGGLE_FAVORITE_SELLER", payload: { sellerId } },
+      label: "В избранное",
+      icon: "heart",
+      variant: "secondary",
+    },
+    {
+      id: "report",
+      action: { type: "REPORT_MISSING_PRODUCT", payload: { sellerId } },
+      label: "Сообщить о товаре",
+      icon: "plus",
+      variant: "ghost",
+    },
+  ];
+}
+
 export const MockSellerRepository: SellerRepository = {
   getAllSellers() {
     return delay(ALL_SELLERS);
@@ -134,6 +170,108 @@ export const MockSellerRepository: SellerRepository = {
     const q = normalizeForSearch(query);
     if (!q) return delay(null);
     return delay(ALL_SELLERS.find((s) => normalizeForSearch(s.name).includes(q)) ?? null);
+  },
+
+  /** Карточка продавца (ТЗ-025 §12): доменная SellerCardViewModel, которую
+   *  Backend/Platform Core отдаёт экрану. Товары делятся на «из вашей покупки»
+   *  (basketProducts — первые 4) и «остальные» (otherProducts); доступность и
+   *  сортировка детерминированы. */
+  getSellerCard(id: SellerId) {
+    const record = ALL_SELLERS.find((s) => s.sellerId === id);
+    if (!record) {
+      return delay({
+        loadState: "error",
+        seller: { id, name: "Продавец не найден", rating: 0, distance: "" },
+        coverage: { have: 0, total: 0, fullyCovered: false },
+        importantAlerts: [],
+        basketProducts: [],
+        otherProducts: [],
+        trustInfo: "",
+        trustLevel: "low",
+        lastConfirmedAt: "",
+        dataMayBeStale: false,
+        photos: [],
+        availableActions: [],
+        reports: [],
+        isFavorite: false,
+        otherProductsExpanded: false,
+      } satisfies SellerCardViewModel);
+    }
+
+    const index = ALL_SELLERS.indexOf(record);
+    const allProducts = buildSellerProducts(record.sellerId, record.categories, index);
+    const basketProducts = allProducts.slice(0, 4);
+    const otherProducts = allProducts.slice(4);
+    const have = basketProducts.filter((p) => p.availability === "available").length;
+
+    const vm: SellerCardViewModel = {
+      loadState: "ready",
+      seller: {
+        id: record.sellerId,
+        name: record.name,
+        rating: record.rating,
+        distance: DistanceFormatter.format({ meters: record.distanceMeters }),
+      },
+      coverage: {
+        have,
+        total: basketProducts.length,
+        fullyCovered: have === basketProducts.length,
+      },
+      importantAlerts:
+        index % 5 === 0 ? ["Цены в лавке могут отличаться от указанных в каталоге"] : [],
+      basketProducts,
+      otherProducts,
+      trustInfo: "Продавец проверен площадкой · работает с 2023 года",
+      trustLevel: TRUST_LEVELS[index % TRUST_LEVELS.length],
+      lastConfirmedAt: "позавчера",
+      dataMayBeStale: index % 3 === 0,
+      photos: PHOTO_PLACEHOLDERS.map(
+        (placeholderColor, photoIndex): PhotoItem => ({
+          id: `${record.sellerId}:photo-${photoIndex + 1}`,
+          placeholderColor,
+        }),
+      ),
+      availableActions: sellerCardAvailableActions(record.sellerId),
+      reports:
+        index % 3 === 0
+          ? [
+              {
+                id: `${record.sellerId}:report-1`,
+                title: "Покупатели хвалят свежесть продуктов",
+                date: "3 дня назад",
+                author: "Покупатель",
+                trustLevel: "high",
+              },
+            ]
+          : [],
+      isFavorite: index % 7 === 0,
+      otherProductsExpanded: false,
+    };
+    return delay(vm);
+  },
+
+  /** Полный каталог товаров продавца с данными для страницы (эмодзи, описание,
+   *  категория). Сортировка — как везде: доступные → замены → отсутствующие. */
+  getSellerProducts(id: SellerId) {
+    const record = ALL_SELLERS.find((s) => s.sellerId === id);
+    if (!record) return delay([]);
+    const index = ALL_SELLERS.indexOf(record);
+    const allProducts = buildSellerProducts(record.sellerId, record.categories, index);
+    const sorted: SellerProductRecord[] = [...allProducts].sort(
+      (a, b) =>
+        PRODUCT_AVAILABILITY_ORDER[a.availability ?? "available"] -
+        PRODUCT_AVAILABILITY_ORDER[b.availability ?? "available"],
+    );
+    return delay(sorted);
+  },
+
+  /** Похожие продавцы (общие категории): сначала все общие, затем по убыванию
+   *  числа общих категорий — см. rankRecommendedSellers. */
+  getRecommendedSellers(id: SellerId) {
+    const record = ALL_SELLERS.find((s) => s.sellerId === id);
+    if (!record) return delay([]);
+    const recommendations: RecommendedSeller[] = rankRecommendedSellers(record, ALL_SELLERS);
+    return delay(recommendations);
   },
 
   getCategories() {

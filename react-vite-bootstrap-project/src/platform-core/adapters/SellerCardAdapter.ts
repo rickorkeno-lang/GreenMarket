@@ -1,13 +1,7 @@
 import type { ContentBlock, RowItem } from "../contracts/ContentBlock";
 import type { SellerCardViewModel } from "../viewmodels/SellerCardViewModel";
 import type { SellerId } from "../contracts/Action";
-import type { ProductRecord } from "../contracts/DomainTypes";
-
-const AVAILABILITY_ORDER: Record<NonNullable<ProductRecord["availability"]>, number> = {
-  available: 0,
-  replacement: 1,
-  missing: 2,
-};
+import { PRODUCT_AVAILABILITY_ORDER, type ProductRecord } from "../contracts/DomainTypes";
 
 function productRow(sellerId: SellerId, product: ProductRecord): RowItem {
   return {
@@ -57,7 +51,7 @@ export const SellerCardAdapter = {
     } else {
       // ТЗ-025 v1.1 §6: фиксированный порядок — доступные → замены → отсутствующие.
       const sorted = [...vm.basketProducts].sort(
-        (a, b) => AVAILABILITY_ORDER[a.availability ?? "available"] - AVAILABILITY_ORDER[b.availability ?? "available"]
+        (a, b) => PRODUCT_AVAILABILITY_ORDER[a.availability ?? "available"] - PRODUCT_AVAILABILITY_ORDER[b.availability ?? "available"]
       );
       blocks.push({ type: "list", items: sorted.map((p) => productRow(vm.seller.id, p)), virtualize: sorted.length > 8 });
     }

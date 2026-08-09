@@ -1,12 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   useGreenMarketRuntime,
   useRuntimeInstance,
 } from '@/platform-core/navigation-runtime-layer/hooks/useGreenMarketRuntime';
 import { currentEntry } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
-import { asSellerId } from '@/platform-core/contracts/Action';
-import type { NavigationEntry, ScreenId } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
+import { entryFromPath, pathFromEntry } from '@/app/routeMapping';
 
 /**
  * Мост между реальным GreenMarketRuntime (стек экранов Platform Core) и
@@ -22,35 +21,10 @@ import type { NavigationEntry, ScreenId } from '@/platform-core/navigation-runti
  *  - Runtime → URL: при dispatch() внутриприкладного Action (OPEN_MAP,
  *    OPEN_SELLER_LIST, OPEN_CATALOG, BACK и т.д.) стек меняется, и этот
  *    компонент переносит изменение в URL, чтобы адресная строка не отставала.
+ *
+ * Отображение pathname ↔ NavigationEntry живёт в routeMapping.ts (чистые
+ * функции, тестируются отдельно).
  */
-const PATH_TO_SCREEN: Record<string, ScreenId> = {
-  '/': 'Catalog',
-  '/catalog': 'Catalog',
-  '/map': 'Map',
-  '/seller-list': 'SellerList',
-};
-
-const SCREEN_TO_PATH: Partial<Record<ScreenId, string>> = {
-  Catalog: '/catalog',
-  Map: '/map',
-  SellerList: '/seller-list',
-};
-
-function entryFromPath(pathname: string, sellerId?: string): NavigationEntry | null {
-  if (pathname.startsWith('/seller/') && sellerId) {
-    return { screen: 'SellerCard', params: { sellerId: asSellerId(sellerId) } };
-  }
-  const screen = PATH_TO_SCREEN[pathname];
-  if (!screen) return null;
-  return { screen, params: {} } as NavigationEntry;
-}
-
-function pathFromEntry(entry: NavigationEntry): string | null {
-  if (entry.screen === 'SellerCard') {
-    return `/seller/${entry.params.sellerId}`;
-  }
-  return SCREEN_TO_PATH[entry.screen] ?? null;
-}
 
 /** Рендерится один раз внутри BrowserRouter + GreenMarketRuntimeProvider,
  *  ничего не отображает — только синхронизирует состояние. */
@@ -59,7 +33,6 @@ export function RuntimeRouteSync() {
   const { state } = useGreenMarketRuntime();
   const location = useLocation();
   const navigate = useNavigate();
-  const params = useParams();
   const isSyncingFromUrl = useRef(false);
   /** Первый прогон эффекта URL → Runtime — это «точка входа» (загрузка
    *  страницы по текущему URL, в том числе deep-link). В этот момент у
@@ -73,7 +46,7 @@ export function RuntimeRouteSync() {
   useEffect(() => {
     const isEntryPoint = isEntryPointSync.current;
     isEntryPointSync.current = false;
-    const desired = entryFromPath(location.pathname, params.sellerId);
+    const desired = entryFromPath(location.pathname);
     if (!desired) return;
     const active = currentEntry(runtime.getState().navigation);
     const alreadyThere =
@@ -87,7 +60,7 @@ export function RuntimeRouteSync() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- намеренно реагирует только на смену пути
-  }, [location.pathname, params.sellerId]);
+  }, [location.pathname]);
 
   // Runtime → URL
   useEffect(() => {
@@ -95,13 +68,18 @@ export function RuntimeRouteSync() {
       isSyncingFromUrl.current = false;
       return;
     }
-    const entry = currentEntry(state.navigation);
+    // Читаем актуальное состояние Runtime через runtime.getState(), а не
+    // замыкание `state`: в StrictMode (dev) эффекты монтируются дважды, и на
+    // втором проходе замыкание `state` всё ещё содержит старый стек (напр.
+    // [Catalog]), из-за чего на deep-link /seller/:id происходил лишний
+    // navigate('/catalog'). getState() всегда возвращает свежий стек.
+    const entry = currentEntry(runtime.getState().navigation);
     const path = pathFromEntry(entry);
     if (path && path !== location.pathname) {
       navigate(path);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- намеренно реагирует только на смену состояния Runtime
-  }, [state]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `state` служит триггером на изменение навигации
+  }, [state, runtime, location.pathname]);
 
   return null;
 }

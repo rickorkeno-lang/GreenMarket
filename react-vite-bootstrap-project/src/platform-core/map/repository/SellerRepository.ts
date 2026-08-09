@@ -1,6 +1,9 @@
 import type { SellerId } from "@/platform-core/contracts/Action";
 import type { CategoryId } from "@/platform-core/contracts/DomainTypes";
 import type { GeoPoint, MapBounds, SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
+import type { SellerCardViewModel } from "@/platform-core/viewmodels/SellerCardViewModel";
+import type { SellerProductRecord } from "@/platform-core/map/repository/mockSellerCatalog";
+import type { RecommendedSeller } from "@/platform-core/map/recommendations/SellerRecommendations";
 
 export interface CategoryOption {
   categoryId: CategoryId;
@@ -48,4 +51,14 @@ export interface SellerRepository {
    *  список совпадений. */
   findSeller(query: string): Promise<SellerMapRecord | null>;
   getCategories(): Promise<CategoryOption[]>;
+  /** Страница продавца (ТЗ-025 §12): доменная SellerCardViewModel. Методы ниже
+   *  обслуживают экран SellerCard и живут в этом же репозитории, т.к. продавец
+   *  и его товары — один источник данных (Map о них не знает). */
+  getSellerCard(id: SellerId): Promise<SellerCardViewModel>;
+  /** Каталог товаров продавца с полями для страницы (эмодзи, описание,
+   *  категория), отсортированный доступные → замены → отсутствующие. */
+  getSellerProducts(id: SellerId): Promise<SellerProductRecord[]>;
+  /** Похожие продавцы: сначала все общие категории, затем по убыванию числа
+   *  общих — см. rankRecommendedSellers. */
+  getRecommendedSellers(id: SellerId): Promise<RecommendedSeller[]>;
 }

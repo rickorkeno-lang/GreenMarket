@@ -82,6 +82,17 @@ function run() {
   runtime8.forceNavigate({ screen: "Map", params: {} });
   assert.equal(runtime8.getState().navigation.stack.length, 2, "forceNavigate после forceReset: переход пользователя кладётся поверх");
 
+  // 8. SellerCard: OPEN_SELLER (переход из блока «Похожие продавцы») разрешён
+  //    и кладёт карточку другого продавца поверх текущей.
+  const runtime9 = createGreenMarketRuntime();
+  runtime9.dispatch({ type: "OPEN_SELLER", payload: { sellerId } });
+  assert.equal(currentEntry(runtime9.getState().navigation).screen, "SellerCard", "SellerCard: открыт первый продавец");
+  const anotherSeller = asSellerId("s2");
+  const acceptedAgain = runtime9.dispatch({ type: "OPEN_SELLER", payload: { sellerId: anotherSeller } });
+  assert.ok(acceptedAgain, "SellerCard: OPEN_SELLER входит в availableActions (рекомендации)");
+  assert.equal(currentEntry(runtime9.getState().navigation).screen, "SellerCard", "SellerCard: открыт другой продавец");
+  assert.equal(runtime9.getState().navigation.stack.length, 3, "SellerCard: карточка другого продавца положена поверх");
+
   console.log("GreenMarketRuntime: все проверки пройдены");
 }
 

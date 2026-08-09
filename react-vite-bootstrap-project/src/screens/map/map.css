@@ -135,3 +135,95 @@
   height: 6px;
   background: var(--color-brand-primary-strong);
 }
+
+/* ---------- Строка поиска с автодополнением (MAP-019) ----------
+ * Инпут в шапке карты + дропдаун подсказок под ним. Дропдаун позиционируется
+ * относительно обёртки .gm-map-search (absolute), перекрывает карту и панель
+ * FAB (z-index как у tooltip), ограничен по высоте с внутренней прокруткой.
+ * Все цвета/отступы — из токенов темы (light/dark). */
+.gm-map-search {
+  position: relative;
+}
+
+.gm-map-search__input {
+  width: 100%;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-default);
+  padding: 0 var(--space-md);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-primary);
+}
+
+.gm-map-search__dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  left: 0;
+  right: 0;
+  z-index: var(--z-tooltip);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--space-xs);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+  box-shadow: var(--elevation-3);
+}
+
+.gm-map-search__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.gm-map-search__suggestion {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  font-family: var(--font-family-body);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--easing-standard);
+}
+
+.gm-map-search__suggestion:hover {
+  background: var(--color-hover-overlay);
+}
+
+.gm-map-search__suggestion--active {
+  background: var(--color-selected-subtle);
+}
+
+.gm-map-search__suggestion-icon {
+  flex: none;
+  font-size: var(--font-size-md);
+}
+
+.gm-map-search__suggestion-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gm-map-search__suggestion-name {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.gm-map-search__suggestion-meta {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

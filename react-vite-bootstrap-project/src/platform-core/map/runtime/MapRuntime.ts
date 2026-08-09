@@ -1,5 +1,12 @@
 import type { SellerId } from "@/platform-core/contracts/Action";
-import type { BottomSheetState, GeoPoint, MapBounds, SellerMapRecord, SellerSearchState } from "@/platform-core/map/viewmodels/MapViewModel";
+import type {
+  BottomSheetState,
+  GeoPoint,
+  MapBounds,
+  SearchSuggestionsState,
+  SellerMapRecord,
+  SellerSearchState,
+} from "@/platform-core/map/viewmodels/MapViewModel";
 import type { CategoryOption } from "@/platform-core/map/repository/SellerRepository";
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
 import { GeoService } from "@/platform-core/map/gis/GeoService";
@@ -51,10 +58,13 @@ export const DEFAULT_SELLER_SEARCH_RADIUS_METERS = 5000;
 
 /* Дебаунс асинхронных запросов runtime (методы request* ниже): запрос к
  * Repository/геокодированию запускается после паузы в событиях (moveend/zoomend,
- * ввод радиуса), а не на каждый кадр/символ (MAP-011, MAP-053/MAP-018). */
+ * ввод радиуса), а не на каждый кадр/символ (MAP-011, MAP-053/MAP-018).
+ * SEARCH_SUGGESTIONS_DEBOUNCE_MS — ввод строки поиска (MAP-019): не дёргаем
+ * Repository на каждый символ, подсказки запрашиваются после паузы в наборе. */
 const VISIBLE_SELLERS_DEBOUNCE_MS = 500;
 const AREA_LABEL_DEBOUNCE_MS = 500;
 const SELLER_SEARCH_DEBOUNCE_MS = 500;
+const SEARCH_SUGGESTIONS_DEBOUNCE_MS = 350;
 
 function boundsNearlyEqual(a: MapBounds, b: MapBounds): boolean {
   return (
@@ -86,6 +96,9 @@ export interface MapRuntimeState {
    *  пересчитывается из него тем же глобальным фильтром, что и visibleSellers
    *  (единая сущность — смена фильтра в любом месте видна во всех). */
   sellerSearch: SellerSearchState;
+  /** Автодополнение строки поиска (MAP-019): подсказки по мере ввода.
+   *  Актуально всегда; дропдаун в шапке показывает его содержимое. */
+  searchSuggestions: SearchSuggestionsState;
   mapCenter: GeoPoint;
   zoom: number;
   userLocation: GeoPoint | null;
@@ -128,6 +141,21 @@ export type MapRuntimeAction =
   | { type: "SELLER_SEARCH_RADIUS_CHANGED"; radiusMeters: number }
   | { type: "SELLER_SEARCH_RESULT"; sellers: SellerMapRecord[] }
   | { type: "SELLER_SEARCH_BACK" }
+  /* ======== Автодополнение строки поиска (MAP-019) ========
+   *  SEARCH_SUGGESTIONS_START { query } — ввод изменился, запрос подсказок
+   *    для нового query начат (оптимистично: спиннер в дропдауне виден с
+   *    первого символа, реальный вызов Repository — после дебаунса).
+   *  SEARCH_SUGGESTIONS_LOADED { query, suggestions } — Repository вернул
+   *    подсказки для запроса.
+   *  SEARCH_SUGGESTIONS_FAILED — запрос подсказок упал: дропдаун показывает
+   *    «ничего не найдено», поиск по сабмиту продолжает работать.
+   *  SEARCH_SUGGESTIONS_CLEARED — поле поиска очищено / продавец выбран из
+   *    дропдауна: подсказки сбрасываются, дропдаун закрывается.
+   *  ------------------------------------------------------------------- */
+  | { type: "SEARCH_SUGGESTIONS_START"; query: string }
+  | { type: "SEARCH_SUGGESTIONS_LOADED"; query: string; suggestions: SellerMapRecord[] }
+  | { type: "SEARCH_SUGGESTIONS_FAILED" }
+  | { type: "SEARCH_SUGGESTIONS_CLEARED" }
   | { type: "AREA_LABEL_UPDATED"; label: string | null }
   | { type: "CATEGORIES_LOADED"; categories: CategoryOption[] }
   /* Универсальная смена фильтра: выбранные опции одной группы (например
@@ -152,6 +180,12 @@ const initialState: MapRuntimeState = {
     radiusMeters: DEFAULT_SELLER_SEARCH_RADIUS_METERS,
     rawResults: null,
     results: [],
+  },
+  searchSuggestions: {
+    query: "",
+    loading: false,
+    rawSuggestions: [],
+    suggestions: [],
   },
   loading: false,
   error: false,
@@ -182,6 +216,26 @@ function withSearchResults(state: MapRuntimeState): MapRuntimeState {
       ...state.sellerSearch,
       results: applySellerFilters(
         state.sellerSearch.rawResults ?? [],
+        buildSellerFilters(state.categories),
+        state.selectedFilters,
+      ),
+    },
+  };
+}
+
+/** Пересчитывает подсказки автодополнения из rawSuggestions по текущему
+ *  глобальному фильтру. Вызывается и при SEARCH_SUGGESTIONS_LOADED, и при
+ *  SET_FILTER_OPTIONS/CATEGORIES_LOADED — фильтр единая сущность для карты,
+ *  списка продавцов, результатов поиска и подсказок (MAP-019): смена фильтра
+ *  не дёргает Repository, а пересчитывает подсказки локально, как остальные
+ *  списки. */
+function withSearchSuggestions(state: MapRuntimeState): MapRuntimeState {
+  return {
+    ...state,
+    searchSuggestions: {
+      ...state.searchSuggestions,
+      suggestions: applySellerFilters(
+        state.searchSuggestions.rawSuggestions,
         buildSellerFilters(state.categories),
         state.selectedFilters,
       ),
@@ -231,16 +285,18 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
       const groups = buildSellerFilters(action.categories);
       const selectedFilters = pruneSelectedFilters(state.selectedFilters, groups);
       const next = { ...state, categories: action.categories, selectedFilters };
-      return withSearchResults(
-        withVisibleSellers(next, applySellerFilters(next.loadedSellers, groups, selectedFilters)),
+      return withSearchSuggestions(
+        withSearchResults(
+          withVisibleSellers(next, applySellerFilters(next.loadedSellers, groups, selectedFilters)),
+        ),
       );
     }
     case "SET_FILTER_OPTIONS": {
       const selectedFilters = { ...state.selectedFilters, [action.groupId]: action.optionIds };
-      return withSearchResults(
-        withVisibleSellers(
-          { ...state, selectedFilters },
-          applySellerFilters(state.loadedSellers, buildSellerFilters(state.categories), selectedFilters),
+      const next = { ...state, selectedFilters };
+      return withSearchSuggestions(
+        withSearchResults(
+          withVisibleSellers(next, applySellerFilters(state.loadedSellers, buildSellerFilters(state.categories), selectedFilters)),
         ),
       );
     }
@@ -292,6 +348,32 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
     case "SELLER_SEARCH_BACK":
       // Возврат с экрана результатов к выбору точки: мастер остаётся открытым.
       return { ...state, selectedSellerId: null, bottomSheet: "sellerSearchOrigin" };
+    case "SEARCH_SUGGESTIONS_START":
+      // Оптимистичный старт: запрос и подсказки обновляются сразу (спиннер в
+      // дропдауне), реальный ответ придёт в SEARCH_SUGGESTIONS_LOADED.
+      return { ...state, searchSuggestions: { query: action.query, loading: true, rawSuggestions: [], suggestions: [] } };
+    case "SEARCH_SUGGESTIONS_LOADED":
+      // Сырые подсказки от Repository; глобальный фильтр применяется через
+      // withSearchSuggestions — та же единая сущность, что у карты и результатов
+      // поиска (смена фильтра позже пересчитает подсказки без запроса).
+      return withSearchSuggestions({
+        ...state,
+        searchSuggestions: { query: action.query, loading: false, rawSuggestions: action.suggestions, suggestions: [] },
+      });
+    case "SEARCH_SUGGESTIONS_FAILED":
+      // Ошибка запроса подсказок: показываем пустой дропдаун, поиск по
+      // сабмиту (searchSellerByName) продолжает работать отдельно.
+      return {
+        ...state,
+        searchSuggestions: {
+          query: state.searchSuggestions.query,
+          loading: false,
+          rawSuggestions: [],
+          suggestions: [],
+        },
+      };
+    case "SEARCH_SUGGESTIONS_CLEARED":
+      return { ...state, searchSuggestions: initialState.searchSuggestions };
     case "AREA_LABEL_UPDATED":
       return { ...state, currentAreaLabel: action.label };
     default:
@@ -302,8 +384,9 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
 /* §14: диагностические события — карта загружена / масштаб / положение /
  * выбор продавца / открытие и закрытие Bottom Sheet / поиск / фильтр.
  * Переход в карточку продавца логируется в MapScreenView (это уже действие
- * Action Catalog, не внутреннее состояние MapRuntime). */
-function diagnosticsFor(action: MapRuntimeAction): void {
+ * Action Catalog, не внутреннее состояние MapRuntime). nextState нужен там,
+ * где метрика относится к производному состоянию (подсказки после фильтра). */
+function diagnosticsFor(action: MapRuntimeAction, nextState: MapRuntimeState): void {
   switch (action.type) {
     case "MAP_LOADED":
       Diagnostics.track("map.loaded");
@@ -339,6 +422,15 @@ function diagnosticsFor(action: MapRuntimeAction): void {
     case "SELLER_SEARCH_BACK":
       Diagnostics.track("map.seller_search_back");
       return;
+    case "SEARCH_SUGGESTIONS_LOADED":
+      Diagnostics.track("map.search_suggestions_shown", {
+        query: action.query,
+        count: nextState.searchSuggestions.suggestions.length,
+      });
+      return;
+    case "SEARCH_SUGGESTIONS_CLEARED":
+      Diagnostics.track("map.search_suggestions_cleared");
+      return;
     case "CATEGORIES_LOADED":
       Diagnostics.track("map.categories_loaded", { categoryCount: action.categories.length });
       return;
@@ -356,7 +448,7 @@ function createMapRuntime() {
 
   function dispatch(action: MapRuntimeAction): void {
     state = reducer(state, action);
-    diagnosticsFor(action);
+    diagnosticsFor(action, state);
     listeners.forEach((listener) => listener());
   }
 
@@ -373,6 +465,8 @@ function createMapRuntime() {
   let areaLabelSeq = 0;
   let sellerSearchTimer: ReturnType<typeof setTimeout> | null = null;
   let sellerSearchSeq = 0;
+  let searchSuggestionsTimer: ReturnType<typeof setTimeout> | null = null;
+  let searchSuggestionsSeq = 0;
 
   /** Фактическая загрузка продавцов (MAP-011): запрос Repository и применение
    *  ответа только если загрузка всё ещё последняя. */
@@ -444,6 +538,45 @@ function createMapRuntime() {
     if (sellerSearchTimer !== null) clearTimeout(sellerSearchTimer);
   }
 
+  /** Автодополнение строки поиска (MAP-019): подсказки по мере ввода, с
+   *  дебаунсом (не дёргаем Repository на каждый символ) и защитой от гонок
+   *  (поздний ответ устаревшего запроса не перетирает свежий — seq).
+   *
+   *  START диспатчится оптимистично и синхронно на каждом изменении ввода:
+   *  searchSuggestions.query всегда равен текущему тексту, а спиннер в
+   *  дропдауне виден с первого символа, пока реальный вызов Repository ещё
+   *  отложен дебаунсом или в полёте. Пустой запрос сбрасывает подсказки. */
+  function requestSearchSuggestions(query: string): void {
+    const q = query.trim();
+    if (!q) {
+      searchSuggestionsSeq += 1;
+      if (searchSuggestionsTimer !== null) clearTimeout(searchSuggestionsTimer);
+      dispatch({ type: "SEARCH_SUGGESTIONS_CLEARED" });
+      return;
+    }
+    if (searchSuggestionsTimer !== null) clearTimeout(searchSuggestionsTimer);
+    const seq = ++searchSuggestionsSeq;
+    dispatch({ type: "SEARCH_SUGGESTIONS_START", query: q });
+    searchSuggestionsTimer = setTimeout(() => {
+      void MockSellerRepository.searchSellers(q)
+        .then((suggestions) => {
+          if (seq === searchSuggestionsSeq) dispatch({ type: "SEARCH_SUGGESTIONS_LOADED", query: q, suggestions });
+        })
+        .catch(() => {
+          if (seq === searchSuggestionsSeq) dispatch({ type: "SEARCH_SUGGESTIONS_FAILED" });
+        });
+    }, SEARCH_SUGGESTIONS_DEBOUNCE_MS);
+  }
+
+  /** Сброс подсказок (выбор продавца из дропдауна): отменяет отложенный
+   *  запрос и инвалидирует в полёте незавершённый — поздний ответ не вернёт
+   *  подсказки при уже выбранном продавце. */
+  function clearSearchSuggestions(): void {
+    searchSuggestionsSeq += 1;
+    if (searchSuggestionsTimer !== null) clearTimeout(searchSuggestionsTimer);
+    dispatch({ type: "SEARCH_SUGGESTIONS_CLEARED" });
+  }
+
   /** Поиск продавца по имени из строки поиска (MAP-053). Кладёт результат в
    *  state.searchResult и возвращает найденного продавца (null — не найден). */
   async function searchSellerByName(query: string): Promise<SellerMapRecord | null> {
@@ -473,6 +606,8 @@ function createMapRuntime() {
     scheduleSellerSearch,
     cancelPendingSellerSearch,
     searchSellerByName,
+    requestSearchSuggestions,
+    clearSearchSuggestions,
     loadCategories,
   };
 }
