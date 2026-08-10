@@ -8,3 +8,6 @@ dist-ssr
 *.tsbuildinfo
 vite.config.d.ts
 vite.config.js
+
+# OSRM routing data (тяжёлые индексированные файлы; используются Node-биндингами @project-osrm/osrm)
+routing/data

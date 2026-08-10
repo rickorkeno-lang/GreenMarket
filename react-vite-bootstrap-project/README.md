@@ -74,8 +74,16 @@ main.tsx           # Точка входа
 - Vite 5
 - React Router 6
 - Leaflet / react-leaflet (экран Map)
+- OSRM (Node-биндинги `@project-osrm/osrm`, готовится, `routing/`) — система маршрутов к продавцам
 - ESLint + Prettier
 - EditorConfig
+
+## OSRM (роутинг) — план
+
+Система построения маршрутов к продавцам будет на OSRM v26.8.0 через официальные
+Node-биндинги `@project-osrm/osrm` (вариант Б; Docker-вариант удалён). Индексы для
+выгрузки OSM «Гессен» (тестовый Франкфурт) уже собраны в `routing/data/` (~1 ГБ,
+в git не коммитятся). Функциональный код ещё не написан — см. `routing/README.md`.
 
 ## Команды npm
 
