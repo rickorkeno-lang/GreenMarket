@@ -16,6 +16,7 @@ import {
 import { MapSessionStore } from '@/platform-core/map/persistence/MapSessionStore';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
 import type { CameraParams, GeoPoint, MapBounds, MapViewModel, SellerMapRecord } from '@/platform-core/map/viewmodels/MapViewModel';
+import type { ProductSellerMatch } from '@/platform-core/map/product-search/ProductSearch';
 import { MapBottomSheetContent } from '@/screens/map/MapBottomSheetContent';
 import { MapFabButton } from '@/screens/map/MapFabButton';
 import { MapSearchAutocomplete } from '@/screens/map/MapSearchAutocomplete';
@@ -68,7 +69,8 @@ export function MapScreenView() {
 
   const [centerRequestToken, setCenterRequestToken] = useState(0);
   // Тексты полей ввода инициализируются из сохранённого сеанса (MapSessionStore
-  // кеширует чтение localStorage на сеанс — дешёво), чтобы при возврате на
+  // всегда читает localStorage напрямую — getItem дешёв; и runtime при создании,
+  // и экран здесь читают одну и ту же текущую запись), чтобы при возврате на
   // страницу строка поиска и радиус мастера выглядели как при уходе, без
   // мерцания «пусто → заполнено».
   const [searchQuery, setSearchQuery] = useState(() => MapSessionStore.load()?.searchQuery ?? '');
@@ -127,6 +129,13 @@ export function MapScreenView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- один раз при монтировании экрана
   }, []);
 
+  // Актуализация копии истории просмотра в MapRuntime: запись могла появиться
+  // на странице продавца, пока карта была размонтирована, — чтобы кнопка
+  // «История» появилась сразу, а не только после открытия панели.
+  useEffect(() => {
+    MapRuntime.refreshSellerHistory();
+  }, []);
+
   // Загрузка каталога категорий для выпадающего фильтра (MapRuntime хранит
   // их как источник для UI; singleton переживает уход/возврат на экран).
   useEffect(() => {
@@ -178,10 +187,9 @@ export function MapScreenView() {
     };
   }, [persistSession]);
 
-  // Редкий fallback во время сеанса (защита от краша вкладки, когда закрытие
-  // не наступает): любое изменение состояния runtime сохраняет снапшот не
-  // чаще раза в THROTTLE_SAVE_INTERVAL_MS — не дёргая localStorage на каждый
-  // moveend/SELLERS_LOADED.
+  // Периодическое сохранение сеанса (best-effort): любое изменение состояния
+  // runtime сохраняет снапшот не чаще раза в THROTTLE_SAVE_INTERVAL_MS — даже
+  // если сохранение при закрытии страницы не успеет выполниться.
   useEffect(
     () =>
       MapRuntime.subscribe(() => {
@@ -250,6 +258,14 @@ export function MapScreenView() {
 
   const handleOpenSellerList = useCallback(() => dispatch({ type: 'OPEN_SELLER_LIST' }), [dispatch]);
   const handleOpenCatalog = useCallback(() => dispatch({ type: 'OPEN_CATALOG' }), [dispatch]);
+
+  /** «История просмотра»: открывает панель с последними просмотренными
+   *  продавцами (окно по образцу мастера «Поиск продавцов»). Список всегда
+   *  перечитывается из SellerHistoryStore — запись могла появиться на странице
+   *  продавца. */
+  const handleOpenSellerHistory = useCallback(() => {
+    MapRuntime.openSellerHistory();
+  }, []);
 
   /** «Поиск продавцов» (MAP-053/MAP-018). Открывает мастер: выбор точки —
    *  «Моё местоположение» (геолокация с той же обработкой ошибок, что у
@@ -334,11 +350,19 @@ export function MapScreenView() {
     [],
   );
 
-  const handleOpenSellerCard = useCallback(() => {
-    if (!mapState.selectedSellerId) return;
-    Diagnostics.track('map.open_seller_card', { sellerId: mapState.selectedSellerId });
-    dispatch({ type: 'OPEN_SELLER', payload: { sellerId: mapState.selectedSellerId } });
-  }, [dispatch, mapState.selectedSellerId]);
+  /** Открытие страницы продавца (навигация через общий GreenMarketRuntime).
+   *  sellerId из action payload строки (например, истории просмотра) приоритетнее
+   *  выбранного на карте продавца — строка истории может вести на продавца,
+   *  которого нет в видимой области. */
+  const handleOpenSellerCard = useCallback(
+    (sellerId?: SellerId) => {
+      const target = sellerId ?? mapState.selectedSellerId;
+      if (!target) return;
+      Diagnostics.track('map.open_seller_card', { sellerId: target });
+      dispatch({ type: 'OPEN_SELLER', payload: { sellerId: target } });
+    },
+    [dispatch, mapState.selectedSellerId],
+  );
 
   /** Действия из блоков Bottom Sheet (карточка продавца / окно с секциями
    *  «Ваша область» и «Ближайшие» / мастер «Поиск продавцов»): "Открыть
@@ -348,7 +372,7 @@ export function MapScreenView() {
     (action: Action) => {
       switch (action.type) {
         case 'OPEN_SELLER':
-          handleOpenSellerCard();
+          handleOpenSellerCard(action.payload.sellerId);
           break;
         case 'SELECT_SELLER':
           handleSelectListSeller(action.payload.sellerId);
@@ -364,36 +388,51 @@ export function MapScreenView() {
     [handleOpenSellerCard, handleSelectListSeller, handleSearchOriginMyLocation, handleSearchOriginMapCenter],
   );
 
-  /** Сабмит строки поиска (Enter без подсвеченной подсказки, MAP-053): первое
-   *  совпадение по названию центрирует карту и открывает Bottom Sheet. Основной
-   *  путь выбора при автодополнении — handleSearchSuggestionSelect (MAP-019). */
-  const handleSearchSubmit = useCallback(
-    async (rawQuery: string) => {
-      const query = rawQuery.trim();
-      if (!query) return;
-      const found = await MapRuntime.searchSellerByName(query);
-      if (found) {
-        // §6: центрирование карты + автоматическое открытие Bottom Sheet.
-        MapRuntime.dispatch({ type: 'MOVE_MAP', center: found.location, zoom: ZOOM_ON_SELLER });
-        MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: found.sellerId });
-        dispatch({ type: 'SELECT_SELLER', payload: { sellerId: found.sellerId } });
-        setCenterRequestToken((t) => t + 1);
-      }
+  /** Изменение текста строки поиска: локальное состояние поля + запрос
+   *  подсказок в MapRuntime (с дебаунсом и защитой от гонок, MAP-019). В
+   *  режиме «по товару» запрашиваются подсказки названий товаров (или сразу
+   *  продавцы при «Возможно вы имели в виду»). */
+  const handleSearchQueryChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    searchQueryRef.current = value;
+    if (MapRuntime.getState().productSearch.mode === 'product') {
+      MapRuntime.requestProductSuggestions(value);
+    } else {
+      MapRuntime.requestSearchSuggestions(value);
+    }
+  }, []);
+
+  /** Переключатель режима строки поиска («по названию» ↔ «по товару»).
+   *  Сбрасывает обе группы подсказок — ответы прежнего режима не показываются. */
+  const handleSearchModeChange = useCallback((mode: 'name' | 'product') => {
+    MapRuntime.setSearchMode(mode);
+  }, []);
+
+  /** Выбор названия товара из автодополнения (поиск по товару): подстановка
+   *  полного названия в поле, подсказки заменяются продавцами с ценой. */
+  const handleProductNameSelect = useCallback((name: string) => {
+    setSearchQuery(name);
+    searchQueryRef.current = name;
+    MapRuntime.requestProductSellers(name);
+  }, []);
+
+  /** Выбор продавца из товарных подсказок: центрирование карты и открытие
+   *  карточки (как выбор из обычного дропдауна). Текст в поле не заменяется —
+   *  там остаётся название товара. */
+  const handleProductSellerSelect = useCallback(
+    (match: ProductSellerMatch) => {
+      MapRuntime.clearProductSearch();
+      MapRuntime.dispatch({ type: 'MOVE_MAP', center: match.seller.location, zoom: ZOOM_ON_SELLER });
+      MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: match.seller.sellerId });
+      dispatch({ type: 'SELECT_SELLER', payload: { sellerId: match.seller.sellerId } });
+      setCenterRequestToken((t) => t + 1);
     },
     [dispatch],
   );
 
-  /** Изменение текста строки поиска: локальное состояние поля + запрос
-   *  подсказок в MapRuntime (с дебаунсом и защитой от гонок, MAP-019). */
-  const handleSearchQueryChange = useCallback((value: string) => {
-    setSearchQuery(value);
-    searchQueryRef.current = value;
-    MapRuntime.requestSearchSuggestions(value);
-  }, []);
-
-  /** Выбор продавца из дропдауна автодополнения (MAP-019): центрирование
-   *  карты, открытие Bottom Sheet и подстановка полного названия в поле поиска
-   *  (подсказки сбрасываются, дропдаун закрывается). */
+  /** Выбор продавца из дропдауна автодополнения «по названию» (MAP-019):
+   *  центрирование карты, открытие Bottom Sheet и подстановка полного названия
+   *  в поле поиска (подсказки сбрасываются, дропдаун закрывается). */
   const handleSearchSuggestionSelect = useCallback(
     (seller: SellerMapRecord) => {
       setSearchQuery(seller.name);
@@ -403,6 +442,30 @@ export function MapScreenView() {
       MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: seller.sellerId });
       dispatch({ type: 'SELECT_SELLER', payload: { sellerId: seller.sellerId } });
       setCenterRequestToken((t) => t + 1);
+    },
+    [dispatch],
+  );
+
+  /** Сабмит строки поиска (Enter без подсвеченной подсказки, MAP-053). По
+   *  режиму: по названию — первое совпадение центрирует карту и открывает
+   *  Bottom Sheet; по товару — подсказки заменяются продавцами с ценой
+   *  (прямые совпадения или «Возможно вы имели в виду»). */
+  const handleSearchSubmit = useCallback(
+    async (rawQuery: string) => {
+      const query = rawQuery.trim();
+      if (!query) return;
+      if (MapRuntime.getState().productSearch.mode === 'product') {
+        MapRuntime.requestProductSellers(query);
+        return;
+      }
+      const found = await MapRuntime.searchSellerByName(query);
+      if (found) {
+        // §6: центрирование карты + автоматическое открытие Bottom Sheet.
+        MapRuntime.dispatch({ type: 'MOVE_MAP', center: found.location, zoom: ZOOM_ON_SELLER });
+        MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: found.sellerId });
+        dispatch({ type: 'SELECT_SELLER', payload: { sellerId: found.sellerId } });
+        setCenterRequestToken((t) => t + 1);
+      }
     },
     [dispatch],
   );
@@ -423,6 +486,8 @@ export function MapScreenView() {
       bottomSheet: mapState.bottomSheet,
       sellerSearch: mapState.sellerSearch,
       searchSuggestions: mapState.searchSuggestions,
+      productSearch: mapState.productSearch,
+      sellerHistory: mapState.sellerHistory,
       currentAreaLabel: mapState.currentAreaLabel,
     }),
     [mapState, camera],
@@ -440,9 +505,14 @@ export function MapScreenView() {
           <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 360 }}>
             <MapSearchAutocomplete
               query={searchQuery}
+              searchMode={mapState.productSearch.mode}
               suggestionsState={mapState.searchSuggestions}
+              productSearch={mapState.productSearch}
               onQueryChange={handleSearchQueryChange}
+              onModeChange={handleSearchModeChange}
               onSelect={handleSearchSuggestionSelect}
+              onProductNameSelect={handleProductNameSelect}
+              onProductSellerSelect={handleProductSellerSelect}
               onSubmit={(query) => void handleSearchSubmit(query)}
             />
           </div>
@@ -488,6 +558,9 @@ export function MapScreenView() {
         <div className="gm-map-fab-panel">
           <MapFabButton label="Открыть каталог" icon="🛒" onClick={handleOpenCatalog} testId="open-catalog" />
           <MapFabButton label="Поиск продавцов" icon="🧭" onClick={handleOpenSellerSearch} testId="open-seller-search" />
+          {mapState.sellerHistory.length > 0 && (
+            <MapFabButton label="История" icon="🕘" onClick={handleOpenSellerHistory} testId="open-seller-history" />
+          )}
           <MapFabButton label="Моё местоположение" icon="📍" onClick={() => void handleCenterOnUser()} />
         </div>
       </Content>
@@ -572,7 +645,30 @@ export function MapScreenView() {
                 <div className="gm-seller-search-results__list">
                   <MapBottomSheetContent
                     blocks={bottomSheetBlocks}
-                    onRetry={() => MapRuntime.retryVisibleSellers()}
+                    onRetry={() => MapRuntime.requestSellerSearch()}
+                    onAction={handleBlockAction}
+                  />
+                </div>
+              </Stack>
+            ) : mapState.bottomSheet === 'sellerHistory' ? (
+              <Stack gap="sm" className="gm-seller-history">
+                {/* Заголовок с «Назад» не скроллится и не выталкивается длинным
+                    списком за экран — список скроллится в собственном блоке
+                    (тот же паттерн, что у результатов поиска, MAP-053). */}
+                <div className="gm-seller-history__header">
+                  <Row gap="sm" align="center" style={{ position: 'relative', width: '100%' }}>
+                    <IconButton label="Назад" onClick={handleUnselect} data-testid="seller-history-back">
+                      <Icon label="Назад">←</Icon>
+                    </IconButton>
+                    <Text variant="title" as="h2" id="map-seller-sheet-title">
+                      История просмотра
+                    </Text>
+                  </Row>
+                </div>
+                <div className="gm-seller-history__list">
+                  <MapBottomSheetContent
+                    blocks={bottomSheetBlocks}
+                    onRetry={() => {}}
                     onAction={handleBlockAction}
                   />
                 </div>

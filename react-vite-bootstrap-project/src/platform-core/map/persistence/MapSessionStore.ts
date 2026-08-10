@@ -47,19 +47,23 @@ export interface MapSessionSnapshot {
 
 const STORAGE_KEY = "gm.map.session.v1";
 
-/** Троттлинг fallback-канала сохранения (защита от краша вкладки, когда
- *  pagehide/beforeunload не успевают): MapScreenView подписан на изменения
- *  runtime и вызывает saveThrottled — пишем не чаще раза в интервал, а не на
- *  каждый moveend/SELLERS_LOADED. Основное сохранение — при закрытии страницы
- *  и уходе с экрана (см. MapScreenView). */
+/** Периодическое сохранение сеанса (best-effort): MapScreenView подписан на
+ *  изменения runtime и вызывает saveThrottled — пишем не чаще раза в интервал,
+ *  а не на каждый moveend/SELLERS_LOADED. Это страховка на случай, если
+ *  сохранение при закрытии страницы/уходе с экрана не успеет выполниться;
+ *  основное сохранение — там же (см. MapScreenView). */
 const THROTTLE_SAVE_INTERVAL_MS = 2_000;
 
 let lastThrottledSaveAt = 0;
 
-/** Кеш прочитанного снапшота: и MapRuntime (при создании), и MapScreenView
- *  (при первом рендере) читают одну и ту же запись — достаточно одного чтения
- *  и валидации на сеанс. undefined = ещё не читали. */
-let cache: MapSessionSnapshot | null | undefined;
+/** СТОРОНА СОСТОЯНИЯ (замечание №1): Store — только сериализация/десериализация
+ *  сеанса. Источником текущего состояния является MapRuntime (singleton,
+ *  IMP-003.1.2 §8) — MapSessionStore НЕ хранит и НЕ кеширует снапшот (замечание
+ *  №2): устаревший кеш отдал бы битые данные, если localStorage изменила другая
+ *  вкладка или другой механизм persistence. load() всегда читает localStorage
+ *  заново — getItem дешёв, а load() вызывается лишь при старте сеанса (runtime
+ *  при создании + инициализация полей ввода экрана), оба читателя видят одну и
+ *  ту же текущую запись. */
 
 /** Доступ к localStorage без риска исключения в приватном режиме или
  *  окружении без DOM (npx tsx / Node): возвращает null, и сохранение молча
@@ -169,22 +173,19 @@ export function normalizeSnapshot(raw: unknown): MapSessionSnapshot | null {
 
 export const MapSessionStore = {
   /** Восстановление сохранённого сеанса карты. null — записи нет или она
-   *  повреждена (экран стартует из начальных значений). Результат кешируется
-   *  на сеанс (см. cache) — и runtime, и экран читают одну и ту же запись. */
+   *  повреждена (экран стартует из начальных значений). Всегда читает
+   *  localStorage заново — кеша нет (см. комментарий выше), поэтому внешние
+   *  изменения записи (другая вкладка, другой механизм persistence) видны
+   *  сразу, а не по прошествии сеанса. */
   load(): MapSessionSnapshot | null {
-    if (cache !== undefined) return cache;
     const storage = getStorage();
-    if (!storage) {
-      cache = null;
-      return null;
-    }
+    if (!storage) return null;
     try {
       const raw = storage.getItem(STORAGE_KEY);
-      cache = raw ? normalizeSnapshot(JSON.parse(raw)) : null;
+      return raw ? normalizeSnapshot(JSON.parse(raw)) : null;
     } catch {
-      cache = null;
+      return null;
     }
-    return cache;
   },
 
   /** Полная запись текущего сеанса. Основной канал — закрытие страницы
@@ -195,16 +196,15 @@ export const MapSessionStore = {
     if (!storage) return;
     try {
       storage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-      cache = snapshot;
     } catch {
       // Хранилище переполнено/заблокировано — пропускаем.
     }
   },
 
-  /** Редкий fallback во время сеанса (см. THROTTLE_SAVE_INTERVAL_MS): защищает
-   *  сеанс при краше вкладки, когда закрытие не наступает, не дёргая
-   *  localStorage на каждый moveend. Вызывается из подписки на изменения
-   *  runtime в MapScreenView. */
+  /** Периодическое сохранение во время сеанса (см. THROTTLE_SAVE_INTERVAL_MS):
+   *  поддерживает снапшот актуальным, даже если закрытие страницы не
+   *  наступит, не дёргая localStorage на каждый moveend. Вызывается из
+   *  подписки на изменения runtime в MapScreenView. */
   saveThrottled(snapshot: MapSessionSnapshot): void {
     const now = Date.now();
     if (now - lastThrottledSaveAt < THROTTLE_SAVE_INTERVAL_MS) return;

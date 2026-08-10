@@ -29,7 +29,14 @@ const storage = new Map<string, string>();
 // «Предыдущий сеанс»: карта стояла на Франкфурте (zoom 15), фильтр «Овощи и
 // фрукты» + «Только открытые», в строке поиска «Медовый», открыт мастер
 // «Поиск продавцов» с точкой «Моё местоположение» (радиус 2.5 км) и открыта
-// карточка продавца «Медовый край» (данные карточки — снапшот сеанса).
+// карточка продавца «Медовый край» (seller-1).
+//
+// Данные карточки в снапшоте намеренно УСТАРЕЛИ (isOpenNow=true, «Открыто до
+// 20:00»), а в каталоге у seller-1 isOpenNow=false («Открывается в 09:00»):
+// карточка обязана сначала мгновенно отрисоваться со снапшотом (замечание №5 —
+// снапшот здесь не «спорная модель», а осознанный UX мгновенного рендера),
+// но затем MapRuntime принудительно актуализирует её через Repository.getSeller
+// (requestSellerRefresh), и данные заменяются свежими.
 const seeded = {
   viewport: { center: { lat: 50.12, lng: 8.66 }, zoom: 15 },
   selectedFilters: { category: ["vegetables"], state: ["open"] },
@@ -42,9 +49,9 @@ const seeded = {
   },
   bottomSheet: {
     type: "sellerSummary",
-    sellerId: "seller-medoviy-kray",
+    sellerId: "seller-1",
     seller: {
-      sellerId: "seller-medoviy-kray",
+      sellerId: "seller-1",
       name: "Медовый край",
       location: { lat: 50.12, lng: 8.66 },
       rating: 4.8,
@@ -76,17 +83,40 @@ assert.deepEqual(s.sellerSearch.origin, { lat: 50.11, lng: 8.68 }, "точка �
 assert.equal(s.sellerSearch.originLabel, "Моё местоположение", "подпись точки восстановлена");
 assert.equal(s.sellerSearch.radiusMeters, 2500, "радиус поиска восстановлен");
 
-// Открытая карточка восстановлена: выбор продавца + снапшот данных карточки
-// (продавец может быть вне видимой области — данные берутся из searchResult).
+// Открытая карточка восстановлена: выбор продавца + МГНОВЕННЫЙ рендер из
+// снапшота сеанса (продавец может быть вне видимой области — данные берутся
+// из searchResult до ответа Repository).
 assert.equal(s.bottomSheet, "sellerSummary", "открытая панель восстановлена");
-assert.equal(s.selectedSellerId, "seller-medoviy-kray", "выбор продавца восстановлен");
-assert.equal(s.searchResult?.[0]?.sellerId, "seller-medoviy-kray", "данные карточки восстановлены в searchResult");
-assert.equal(s.searchResult?.[0]?.name, "Медовый край", "данные карточки содержат имя продавца");
+assert.equal(s.selectedSellerId, "seller-1", "выбор продавца восстановлен");
+assert.equal(s.searchResult?.[0]?.sellerId, "seller-1", "данные карточки восстановлены в searchResult");
+assert.equal(s.searchResult?.[0]?.name, "Медовый край", "мгновенный рендер: имя из снапшота");
+assert.equal(s.searchResult?.[0]?.isOpenNow, true, "мгновенный рендер: статус из снапшота (устаревший)");
 
 // Незапоминаемое состояние остаётся базовым: результаты поиска не храним,
 // видимая область/категории перезапрашиваются репозиторием.
 assert.equal(s.sellerSearch.rawResults, null, "результаты мастера не храним");
 assert.equal(s.visibleSellers.length, 0, "видимая область не хранится (грузится репозиторием)");
 assert.equal(s.categories.length, 0, "категории не хранятся (грузится репозиторием)");
+
+// Замечание №5: MapRuntime при восстановлении карточки ПАРАЛЛЕЛЬНО вызывает
+// Repository.getSeller — после ответа searchResult заменяется актуальными
+// данными, а не остаётся устаревшим снапшотом (isOpenNow/часы работы свежие).
+await new Promise((resolve) => setTimeout(resolve, 400));
+const refreshed = MapRuntime.getState();
+assert.equal(
+  refreshed.searchResult?.[0]?.sellerId,
+  "seller-1",
+  "после refresh карточка по-прежнему указывает на выбранного продавца",
+);
+assert.equal(
+  refreshed.searchResult?.[0]?.isOpenNow,
+  false,
+  "актуализация: isOpenNow взят из Repository, а не из снапшота",
+);
+assert.equal(
+  refreshed.searchResult?.[0]?.workingHoursLabel,
+  "Открывается в 09:00",
+  "актуализация: часы работы взяты из Repository",
+);
 
 console.log("MapSessionRestore: все проверки пройдены");

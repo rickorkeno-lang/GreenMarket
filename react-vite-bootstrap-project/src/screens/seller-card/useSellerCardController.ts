@@ -3,12 +3,15 @@ import { useParams } from 'react-router-dom';
 import { useGreenMarketRuntime } from '@/platform-core/navigation-runtime-layer/hooks/useGreenMarketRuntime';
 import { isAtRoot } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
 import { asSellerId } from '@/platform-core/contracts/Action';
-import { MockSellerRepository } from '@/platform-core/map/repository/MockSellerRepository';
-import type { SellerProductRecord } from '@/platform-core/map/repository/mockSellerCatalog';
+import { sellerRepository } from '@/platform-core/map/repository/repository';
+import type { SellerProductRecord } from '@/platform-core/map/repository/SellerRepository';
 import type { RecommendedSeller } from '@/platform-core/map/recommendations/SellerRecommendations';
 import type { SellerCardViewModel } from '@/platform-core/viewmodels/SellerCardViewModel';
 import type { SellerMapRecord } from '@/platform-core/map/viewmodels/MapViewModel';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
+import { sellerStatus, type SellerStatusPresentation } from '@/platform-core/formatting/SellerStatus';
+import { copyTextToClipboard } from '@/platform-core/utils/clipboard';
+import { SellerHistoryStore } from '@/platform-core/map/persistence/SellerHistoryStore';
 
 /**
  * Контроллер страницы продавца (замечания ревью 5–7): собирает все доменные
@@ -18,19 +21,13 @@ import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
  * бизнес-правил — только рендерит готовую модель.
  *
  * Замечание 5 (сортировка — бизнес-правило): продукты не сортируются здесь.
- * Единственный источник порядка по доступности — MockSellerRepository
+ * Единственный источник порядка по доступности — репозиторий
  * (getSellerProducts), который возвращает уже отсортированный список; экран
- * и контроллер лишь прокидывают его.
+ * и контроллер лишь прокидывают его. Доступ к данным — через интерфейс
+ * SellerRepository (см. repository.ts, замечание 12).
  */
 export type SellerCardPageState = 'loading' | 'error' | 'ready';
 export type ShareNotice = 'ok' | 'error' | null;
-
-/** Готовый статус продавца для карточки «О продавце»: бизнес-маппинг
- *  «недоступен/открыт сейчас/сейчас закрыт» живёт в контроллере, а не в JSX. */
-export interface SellerStatusPresentation {
-  text: string;
-  tone: 'success' | 'neutral' | 'danger';
-}
 
 /** Агрегированная view model страницы продавца. Экран рендерит только её. */
 export interface SellerCardPageModel {
@@ -60,39 +57,6 @@ export interface SellerCardPageModel {
 }
 
 const SHARE_NOTICE_TIMEOUT_MS = 4000;
-
-function sellerStatus(record: SellerMapRecord): SellerStatusPresentation {
-  if (!record.isAvailable) return { text: 'Недоступен', tone: 'danger' };
-  if (record.isOpenNow) return { text: 'Открыт сейчас', tone: 'success' };
-  return { text: 'Сейчас закрыт', tone: 'neutral' };
-}
-
-/** Копирование в буфер обмена с fallback'ом для несекурных контекстов
- *  (navigator.clipboard недоступен без https/localhost). */
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // переходим к legacy-пути ниже
-  }
-  try {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.select();
-    const copied = document.execCommand('copy');
-    document.body.removeChild(textarea);
-    return copied;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Загрузка и агрегация всех данных страницы продавца. Хранит локальное
@@ -126,10 +90,10 @@ export function useSellerCardController(): SellerCardPageModel {
     setLoadState('loading');
     try {
       const [recordRes, cardRes, productsRes, recommendationsRes] = await Promise.all([
-        MockSellerRepository.getSeller(sellerId),
-        MockSellerRepository.getSellerCard(sellerId),
-        MockSellerRepository.getSellerProducts(sellerId),
-        MockSellerRepository.getRecommendedSellers(sellerId),
+        sellerRepository.getSeller(sellerId),
+        sellerRepository.getSellerCard(sellerId),
+        sellerRepository.getSellerProducts(sellerId),
+        sellerRepository.getRecommendedSellers(sellerId),
       ]);
       setRecord(recordRes);
       setCard(cardRes);
@@ -145,6 +109,15 @@ export function useSellerCardController(): SellerCardPageModel {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // История просмотра: просмотр засчитывается после успешной загрузки страницы
+  // продавца (record — реальные данные, не 404 и не загрузка). Повторный заход
+  // на ту же страницу обновляет запись (upsert) — время просмотра становится
+  // текущим. Запись хранит снапшот продавца — карта показывает его в панели
+  // истории без повторных запросов.
+  useEffect(() => {
+    if (record) SellerHistoryStore.record(record);
+  }, [record]);
 
   useEffect(
     () => () => {

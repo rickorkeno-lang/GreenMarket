@@ -1,6 +1,7 @@
 import { asProductId, type SellerId } from "@/platform-core/contracts/Action";
 import type { CategoryId } from "@/platform-core/contracts/DomainTypes";
 import type { ProductRecord } from "@/platform-core/contracts/DomainTypes";
+import type { SellerProductRecord } from "@/platform-core/map/repository/SellerRepository";
 
 /* ============================================================================
  * Mock-каталог товаров продавцов (страница продавца, seller-card).
@@ -11,18 +12,9 @@ import type { ProductRecord } from "@/platform-core/contracts/DomainTypes";
  * определяется каталог: пул товаров на каждую категорию + детерминированный
  * построитель набора товаров конкретного продавца.
  *
- * SellerProductRecord расширяет доменный ProductRecord (id/name/price/unit/
- * availability) полями, которые нужны странице для красивого вывода:
- * categoryId (для группировки/эмодзи), emoji и description. ProductRecord —
- * то, что уходит в SellerCardViewModel (нижний Bottom Sheet довольствуется
- * этими полями); всё богатство доступно экрану через getSellerProducts.
+ * Сам интерфейс SellerProductRecord живёт в контракте SellerRepository
+ * (см. замечание ревью №14), здесь — только данные и построение.
  * ========================================================================== */
-
-export interface SellerProductRecord extends ProductRecord {
-  categoryId: CategoryId;
-  emoji: string;
-  description: string;
-}
 
 interface ProductSeed {
   name: string;
@@ -30,6 +22,10 @@ interface ProductSeed {
   unit: string;
   emoji: string;
   description: string;
+  /** Ключевые слова для поиска по товару: синонимы и распространённые
+   *  варианты написания («помидор» → томаты, «морква» → морковь). Опциональны:
+   *  без тегов товар ищется по названию и системе «Возможно вы имели в виду». */
+  tags?: string[];
 }
 
 /** Пул товаров по категориям. Категории совпадают с CATEGORIES в
@@ -37,55 +33,55 @@ interface ProductSeed {
  *  Ключи — строковые CategoryId (brand-тип здесь только на уровне типов). */
 const PRODUCT_SEEDS: Record<string, ProductSeed[]> = {
   vegetables: [
-    { name: "Морковь", price: 45, unit: "1 кг", emoji: "🥕", description: "Сладкая, с грядки" },
-    { name: "Картофель молодой", price: 55, unit: "1 кг", emoji: "🥔", description: "Отборный, для варки и жарки" },
-    { name: "Томаты", price: 180, unit: "1 кг", emoji: "🍅", description: "Мясистые, сочные" },
-    { name: "Огурцы", price: 120, unit: "1 кг", emoji: "🥒", description: "Хрустящие, свежий урожай" },
-    { name: "Яблоки", price: 90, unit: "1 кг", emoji: "🍎", description: "Летние, ароматные" },
-    { name: "Свёкла", price: 40, unit: "1 кг", emoji: "🍠", description: "Для борща и салатов" },
+    { name: "Морковь", price: 45, unit: "1 кг", emoji: "🥕", description: "Сладкая, с грядки", tags: ["морковка", "морква"] },
+    { name: "Картофель молодой", price: 55, unit: "1 кг", emoji: "🥔", description: "Отборный, для варки и жарки", tags: ["картошка", "молодая картошка"] },
+    { name: "Томаты", price: 180, unit: "1 кг", emoji: "🍅", description: "Мясистые, сочные", tags: ["помидор", "помидоры", "томат"] },
+    { name: "Огурцы", price: 120, unit: "1 кг", emoji: "🥒", description: "Хрустящие, свежий урожай", tags: ["огурчик"] },
+    { name: "Яблоки", price: 90, unit: "1 кг", emoji: "🍎", description: "Летние, ароматные", tags: ["яблочко", "яблоко"] },
+    { name: "Свёкла", price: 40, unit: "1 кг", emoji: "🍠", description: "Для борща и салатов", tags: ["свекла"] },
   ],
   dairy: [
-    { name: "Молоко", price: 85, unit: "1 л", emoji: "🥛", description: "Цельное, 3.5%" },
-    { name: "Творог", price: 140, unit: "250 г", emoji: "🧀", description: "Домашний, нежный" },
+    { name: "Молоко", price: 85, unit: "1 л", emoji: "🥛", description: "Цельное, 3.5%", tags: ["молочко", "молоко цельное"] },
+    { name: "Творог", price: 140, unit: "250 г", emoji: "🧀", description: "Домашний, нежный", tags: ["творожок"] },
     { name: "Сметана", price: 95, unit: "300 г", emoji: "🥣", description: "20%, густая" },
-    { name: "Сыр молодой", price: 320, unit: "200 г", emoji: "🧀", description: "Собственного производства" },
+    { name: "Сыр молодой", price: 320, unit: "200 г", emoji: "🧀", description: "Собственного производства", tags: ["сыр"] },
     { name: "Кефир", price: 75, unit: "1 л", emoji: "🥛", description: "Свежий, 2.5%" },
   ],
   meat: [
-    { name: "Говядина", price: 620, unit: "1 кг", emoji: "🥩", description: "Мраморная, охлаждённая" },
-    { name: "Курица", price: 260, unit: "1 кг", emoji: "🍗", description: "Тушка, охлаждённая" },
-    { name: "Фарш говяжий", price: 480, unit: "500 г", emoji: "🥩", description: "Свежеприготовленный" },
-    { name: "Колбаса копчёная", price: 540, unit: "400 г", emoji: "🌭", description: "Домашнего копчения" },
+    { name: "Говядина", price: 620, unit: "1 кг", emoji: "🥩", description: "Мраморная, охлаждённая", tags: ["говядинка"] },
+    { name: "Курица", price: 260, unit: "1 кг", emoji: "🍗", description: "Тушка, охлаждённая", tags: ["курятина", "кура"] },
+    { name: "Фарш говяжий", price: 480, unit: "500 г", emoji: "🥩", description: "Свежеприготовленный", tags: ["фарш"] },
+    { name: "Колбаса копчёная", price: 540, unit: "400 г", emoji: "🌭", description: "Домашнего копчения", tags: ["колбаса"] },
   ],
   bakery: [
-    { name: "Хлеб деревенский", price: 60, unit: "500 г", emoji: "🍞", description: "На закваске, из печи" },
-    { name: "Багет", price: 45, unit: "300 г", emoji: "🥖", description: "Хрустящий, тёплый" },
-    { name: "Пирог с яблоком", price: 220, unit: "1 шт", emoji: "🥧", description: "Домашняя выпечка" },
-    { name: "Булочка сдобная", price: 35, unit: "1 шт", emoji: "🥐", description: "Свежая, к чаю" },
+    { name: "Хлеб деревенский", price: 60, unit: "500 г", emoji: "🍞", description: "На закваске, из печи", tags: ["хлеб", "буханка"] },
+    { name: "Багет", price: 45, unit: "300 г", emoji: "🥖", description: "Хрустящий, тёплый", tags: ["багеттик"] },
+    { name: "Пирог с яблоком", price: 220, unit: "1 шт", emoji: "🥧", description: "Домашняя выпечка", tags: ["пирог"] },
+    { name: "Булочка сдобная", price: 35, unit: "1 шт", emoji: "🥐", description: "Свежая, к чаю", tags: ["булочка", "сдоба"] },
   ],
   honey: [
-    { name: "Мёд цветочный", price: 380, unit: "500 г", emoji: "🍯", description: "Майский, светлый" },
-    { name: "Мёд липовый", price: 420, unit: "500 г", emoji: "🍯", description: "Ароматный, густой" },
-    { name: "Варенье клубничное", price: 190, unit: "300 г", emoji: "🍓", description: "Домашнее" },
-    { name: "Мёд с пергой", price: 450, unit: "350 г", emoji: "🍯", description: "Полезный, с ореховой ноткой" },
+    { name: "Мёд цветочный", price: 380, unit: "500 г", emoji: "🍯", description: "Майский, светлый", tags: ["мед", "мёд", "цветочный мед"] },
+    { name: "Мёд липовый", price: 420, unit: "500 г", emoji: "🍯", description: "Ароматный, густой", tags: ["липовый мед", "мед"] },
+    { name: "Варенье клубничное", price: 190, unit: "300 г", emoji: "🍓", description: "Домашнее", tags: ["варенье"] },
+    { name: "Мёд с пергой", price: 450, unit: "350 г", emoji: "🍯", description: "Полезный, с ореховой ноткой", tags: ["перга"] },
   ],
   fish: [
-    { name: "Форель", price: 850, unit: "1 кг", emoji: "🐟", description: "Свежая, выловленная" },
+    { name: "Форель", price: 850, unit: "1 кг", emoji: "🐟", description: "Свежая, выловленная", tags: ["форелька"] },
     { name: "Карп", price: 320, unit: "1 кг", emoji: "🐟", description: "Живой, из пруда" },
-    { name: "Креветки", price: 640, unit: "500 г", emoji: "🦐", description: "Крупные, охлаждённые" },
+    { name: "Креветки", price: 640, unit: "500 г", emoji: "🦐", description: "Крупные, охлаждённые", tags: ["креветка"] },
     { name: "Скумбрия", price: 280, unit: "1 кг", emoji: "🐠", description: "Солёная, бочковая" },
   ],
   herbs: [
     { name: "Укроп", price: 40, unit: "1 пучок", emoji: "🌿", description: "Свежий, с грядки" },
     { name: "Петрушка", price: 40, unit: "1 пучок", emoji: "🌿", description: "Свежая" },
-    { name: "Базилик", price: 55, unit: "1 пучок", emoji: "🌿", description: "Фиолетовый, ароматный" },
+    { name: "Базилик", price: 55, unit: "1 пучок", emoji: "🌿", description: "Фиолетовый, ароматный", tags: ["базилик фиолетовый"] },
     { name: "Мята", price: 50, unit: "1 пучок", emoji: "🌱", description: "Для чая и лимонада" },
   ],
   nuts: [
-    { name: "Грецкие орехи", price: 520, unit: "300 г", emoji: "🥜", description: "Очищенные, отборные" },
+    { name: "Грецкие орехи", price: 520, unit: "300 г", emoji: "🥜", description: "Очищенные, отборные", tags: ["орех", "орехи"] },
     { name: "Миндаль", price: 460, unit: "250 г", emoji: "🥜", description: "Сладкий, сырой" },
     { name: "Изюм", price: 190, unit: "300 г", emoji: "🍇", description: "Светлый, без косточек" },
-    { name: "Курага", price: 240, unit: "300 г", emoji: "🍑", description: "Сочная, мягкая" },
+    { name: "Курага", price: 240, unit: "300 г", emoji: "🍑", description: "Сочная, мягкая", tags: ["урюк"] },
   ],
 };
 
@@ -125,6 +121,7 @@ export function buildSellerProducts(
         emoji: seed.emoji,
         description: seed.description,
         availability: availabilityFor(sellerIndex, products.length),
+        tags: seed.tags ?? [],
       });
     }
   });

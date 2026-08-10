@@ -23,7 +23,7 @@ export interface SellerListViewModel {
 
 const SellerListBuilder: ScreenBuilder<SellerListViewModel> = {
   build(): ContentBlock[] {
-    return [{ type: "empty", text: "Список продавцов" }];
+    return [{ type: "empty", text: "Все продавцы" }];
   },
 };
 

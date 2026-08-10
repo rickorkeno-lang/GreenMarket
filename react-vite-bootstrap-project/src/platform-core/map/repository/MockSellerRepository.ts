@@ -12,7 +12,16 @@ import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
 import { DistanceFormatter } from "@/platform-core/formatting/DistanceFormatter";
 import type { SellerCardViewModel } from "@/platform-core/viewmodels/SellerCardViewModel";
 import type { AvailableAction, PhotoItem } from "@/platform-core/contracts/ContentBlock";
-import { buildSellerProducts, type SellerProductRecord } from "@/platform-core/map/repository/mockSellerCatalog";
+import { buildSellerProducts } from "@/platform-core/map/repository/mockSellerCatalog";
+import type { SellerProductRecord } from "@/platform-core/map/repository/SellerRepository";
+import {
+  findDirectProductMatches,
+  findMostSimilarProduct,
+  normalizeProductSearch,
+  type ProductNameSuggestion,
+  type ProductSearchCandidate,
+  type ProductSellerMatch,
+} from "@/platform-core/map/product-search/ProductSearch";
 import {
   rankRecommendedSellers,
   type RecommendedSeller,
@@ -78,6 +87,56 @@ function buildSellers(): SellerMapRecord[] {
 }
 
 const ALL_SELLERS = buildSellers();
+
+/* ====== Поиск по товарам ======
+ * Индекс товаров: нормализованное название → кандидат поиска (название +
+ * теги) + продавцы с ценой на этот товар. Строится один раз из каталога —
+ * товары, теги и цены здесь единственный источник (тот же, что у страницы
+ * продавца: buildSellerProducts). Поиск по названию/тегам и «Возможно вы
+ * имели в виду» — чистые функции ProductSearch; тут только сборка индекса
+ * и сортировка продавцов по расстоянию (как в обычном поиске). */
+
+interface ProductIndexEntry extends ProductSearchCandidate {
+  emoji: string;
+  matches: ProductSellerMatch[];
+}
+
+function buildProductIndex(): Map<string, ProductIndexEntry> {
+  const index = new Map<string, ProductIndexEntry>();
+  ALL_SELLERS.forEach((seller, sellerIndex) => {
+    const products = buildSellerProducts(seller.sellerId, seller.categories, sellerIndex);
+    products.forEach((product) => {
+      const key = normalizeProductSearch(product.name);
+      let entry = index.get(key);
+      if (!entry) {
+        entry = {
+          name: product.name,
+          normalizedName: key,
+          tags: product.tags.map((tag) => normalizeProductSearch(tag)),
+          emoji: product.emoji,
+          matches: [],
+        };
+        index.set(key, entry);
+      }
+      entry.matches.push({
+        seller,
+        productName: product.name,
+        price: product.price,
+        unit: product.unit,
+        emoji: product.emoji,
+      });
+    });
+  });
+  return index;
+}
+
+const PRODUCT_INDEX = buildProductIndex();
+
+/** Продавцы, у которых есть товар из записи индекса, по расстоянию (как в
+ *  обычном поиске: «Сортировать продавцов в них как обычно»). */
+function matchesByDistance(entry: ProductIndexEntry): ProductSellerMatch[] {
+  return entry.matches.slice().sort((a, b) => a.seller.distanceMeters - b.seller.distanceMeters);
+}
 
 /** Реестр компараторов сортировки результатов поиска: ключ → компаратор по
  *  полям записи. Новый способ сортировки = новая запись здесь + член в
@@ -272,6 +331,54 @@ export const MockSellerRepository: SellerRepository = {
     if (!record) return delay([]);
     const recommendations: RecommendedSeller[] = rankRecommendedSellers(record, ALL_SELLERS);
     return delay(recommendations);
+  },
+
+  /** Автодополнение названий товаров (поиск по товару): прямые совпадения по
+   *  названию или тегам, отсортированные по релевантности. Подпись строки
+   *  (сколько продавцов, от какой цены) собирается здесь же. */
+  searchProductNames(query: string) {
+    const q = normalizeProductSearch(query);
+    if (!q) return delay([]);
+    const candidates = Array.from(PRODUCT_INDEX.values());
+    const suggestions: ProductNameSuggestion[] = findDirectProductMatches(q, candidates).map((candidate) => {
+      const entry = PRODUCT_INDEX.get(candidate.normalizedName);
+      const prices = entry ? entry.matches.map((m) => m.price) : [];
+      return {
+        name: candidate.name,
+        emoji: entry?.emoji ?? "🛒",
+        sellerCount: entry?.matches.length ?? 0,
+        minPrice: prices.length > 0 ? Math.min(...prices) : 0,
+      };
+    });
+    return delay(suggestions);
+  },
+
+  /** Поиск продавцов по товару: напрямую (по названию/тегу) — лучший товар и
+   *  его продавцы; иначе — «Возможно вы имели в виду» (схожесть >85%, сразу
+   *  продавцы); иначе пустой результат. Продавцы — по расстоянию, с ценой. */
+  searchSellersByProduct(query: string) {
+    const q = normalizeProductSearch(query);
+    if (!q) return delay({ matchedProduct: null, suggestedProduct: null, sellers: [] });
+    const candidates = Array.from(PRODUCT_INDEX.values());
+    const direct = findDirectProductMatches(q, candidates);
+    if (direct.length > 0) {
+      const entry = PRODUCT_INDEX.get(direct[0].normalizedName);
+      return delay({
+        matchedProduct: direct[0].name,
+        suggestedProduct: null,
+        sellers: entry ? matchesByDistance(entry) : [],
+      });
+    }
+    const best = findMostSimilarProduct(q, candidates);
+    if (best) {
+      const entry = PRODUCT_INDEX.get(best.normalizedName);
+      return delay({
+        matchedProduct: null,
+        suggestedProduct: best.name,
+        sellers: entry ? matchesByDistance(entry) : [],
+      });
+    }
+    return delay({ matchedProduct: null, suggestedProduct: null, sellers: [] });
   },
 
   getCategories() {

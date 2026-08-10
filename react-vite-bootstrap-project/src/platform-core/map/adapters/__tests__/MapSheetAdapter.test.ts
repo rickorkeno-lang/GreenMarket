@@ -3,6 +3,7 @@ import { asSellerId } from "../../../contracts/Action";
 import { asCategoryId } from "../../../contracts/DomainTypes";
 import type { ContentBlock } from "../../../contracts/ContentBlock";
 import type { MapViewModel, SellerMapRecord, SellerSearchState } from "../../viewmodels/MapViewModel";
+import type { SellerHistoryEntry } from "../../history/SellerHistory";
 import { MapSheetAdapter } from "../MapSheetAdapter";
 
 /** Формат — как в MapRuntime.test.ts: node:assert, без test runner'а.
@@ -46,9 +47,14 @@ function viewModel(overrides: Partial<MapViewModel>): MapViewModel {
     bottomSheet: "sellerSearchOrigin",
     sellerSearch: sellerSearch(),
     searchSuggestions: { query: "", loading: false, rawSuggestions: [], suggestions: [] },
+    sellerHistory: [],
     currentAreaLabel: null,
     ...overrides,
   };
+}
+
+function historyEntry(id: number, viewedAt: number): SellerHistoryEntry {
+  return { seller: seller(id), viewedAt };
 }
 
 /** Проекция блоков в простые структуры для сравнения. */
@@ -172,6 +178,32 @@ async function run() {
     "Продавец 9",
     "карточка построена из снапшота сеанса (searchResult) при пустой области"
   );
+
+  // История просмотра: пустая — заголовок + пустое состояние (панель можно
+  // открыть и при пустой истории, например после очистки в другой вкладке).
+  const emptyHistory = MapSheetAdapter.toBlocks(viewModel({ bottomSheet: "sellerHistory" }));
+  assert.deepEqual(summary(emptyHistory), [
+    { type: "sectionLabel", text: "История просмотра" },
+    { type: "empty", text: "Вы ещё не просматривали продавцов" },
+  ], "пустая история — заголовок и пустое состояние");
+
+  // История: список строк в порядке из store (свежие сверху), действие строки —
+  // открыть страницу продавца.
+  const withHistory = MapSheetAdapter.toBlocks(
+    viewModel({
+      bottomSheet: "sellerHistory",
+      sellerHistory: [historyEntry(3, 300), historyEntry(1, 100)],
+    }),
+  );
+  assert.deepEqual(summary(withHistory), [
+    { type: "sectionLabel", text: "История просмотра" },
+    {
+      type: "list",
+      count: 2,
+      firstAvatar: "🏪",
+      firstAction: { type: "OPEN_SELLER", payload: { sellerId: asSellerId("seller-3") } },
+    },
+  ], "история: строки продавцов с действием «открыть страницу»");
 
   console.log("MapSheetAdapter: все проверки пройдены");
 }

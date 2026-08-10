@@ -1,6 +1,6 @@
 import { Row, Stack } from '@/layout';
 import { Badge, Card, Divider, Text } from '@/design-system/components';
-import type { SellerProductRecord } from '@/platform-core/map/repository/mockSellerCatalog';
+import type { SellerProductRecord } from '@/platform-core/map/repository/SellerRepository';
 
 /** Бейдж доступности товара: «В наличии» / «Замена» / «Нет в наличии». */
 function availabilityBadge(availability: SellerProductRecord['availability']) {
@@ -11,8 +11,8 @@ function availabilityBadge(availability: SellerProductRecord['availability']) {
 
 /**
  * Секция «Товары продавца» страницы продавца. Чисто презентационный блок:
- * сортировка по доступности выполняется в контроллере экрана, сюда приходит
- * уже отсортированный список.
+ * сортировка по доступности выполняется в репозитории (getSellerProducts),
+ * сюда приходит уже отсортированный список.
  */
 export interface SellerCardProductsProps {
   products: SellerProductRecord[];

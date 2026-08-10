@@ -4,8 +4,10 @@ import type {
   SellerMapRecord,
   SellerSearchState,
 } from "@/platform-core/map/viewmodels/MapViewModel";
+import type { SellerHistoryEntry } from "@/platform-core/map/history/SellerHistory";
 import { RatingFormatter } from "@/platform-core/formatting/RatingFormatter";
 import { DistanceFormatter } from "@/platform-core/formatting/DistanceFormatter";
+import { sellerStatus } from "@/platform-core/formatting/SellerStatus";
 
 /** MapViewModel → MapSheetAdapter → ContentBlock[]. По образцу CatalogAdapter/
  *  SellerCardAdapter: только преобразование модели + форматирование через
@@ -22,12 +24,6 @@ import { DistanceFormatter } from "@/platform-core/formatting/DistanceFormatter"
 /** Иконка продавца в списках — как в ProductCardAdapter/PurchaseOptionsAdapter. */
 const SELLER_ICON = "🏪";
 
-/** Подпись статуса продавца — общая для карточки и списков. */
-function sellerStatusSubtitle(seller: SellerMapRecord): string {
-  if (!seller.isAvailable) return "Сейчас недоступен";
-  return seller.isOpenNow ? "Открыт сейчас" : "Сейчас закрыт";
-}
-
 /** Строка списка: иконка + название + расстояние и статус. Действие —
  *  открыть карточку продавца (SELECT_SELLER), как при выборе маркера. */
 function sellerRow(seller: SellerMapRecord): RowItem {
@@ -35,7 +31,7 @@ function sellerRow(seller: SellerMapRecord): RowItem {
     id: `seller-${seller.sellerId}`,
     avatar: SELLER_ICON,
     title: seller.name,
-    subtitle: `${DistanceFormatter.format({ meters: seller.distanceMeters })} · ${sellerStatusSubtitle(seller)}`,
+    subtitle: `${DistanceFormatter.format({ meters: seller.distanceMeters })} · ${sellerStatus(seller).text}`,
     action: { type: "SELECT_SELLER", payload: { sellerId: seller.sellerId } },
   };
 }
@@ -79,6 +75,15 @@ function searchOriginBlocks(): ContentBlock[] {
  *  отсечены глобальным фильтром (results пуст) — это подсказывает, что
  *  делать дальше (сменить фильтр). */
 function searchResultsBlocks(search: SellerSearchState): ContentBlock[] {
+  if (search.failed) {
+    return [
+      {
+        type: "errorRetry",
+        text: "Не удалось загрузить результаты поиска.",
+        retryAction: { type: "RETRY_SEARCH" },
+      },
+    ];
+  }
   if (search.rawResults === null) {
     return [{ type: "skeleton" }];
   }
@@ -124,7 +129,7 @@ function sellerSummaryBlocks(seller: SellerMapRecord): ContentBlock[] {
           id: `open-${seller.sellerId}`,
           emoji: "🏪",
           title: "Открыть продавца",
-          subtitle: sellerStatusSubtitle(seller),
+          subtitle: sellerStatus(seller).text,
           trailing: "",
           highlighted: true,
           action: { type: "OPEN_SELLER", payload: { sellerId: seller.sellerId } },
@@ -134,15 +139,50 @@ function sellerSummaryBlocks(seller: SellerMapRecord): ContentBlock[] {
   ];
 }
 
+/** Строка истории просмотра: название + статус и категории из снапшота.
+ *  Действие — открыть страницу продавца (OPEN_SELLER): расстояние из снапшота
+ *  для истории нерелевантно (оно было на момент просмотра), а страница
+ *  показывает актуальные данные. */
+function historyRow(entry: SellerHistoryEntry): RowItem {
+  const seller = entry.seller;
+  const categories = seller.categoryNames.length > 0 ? ` · ${seller.categoryNames.join(", ")}` : "";
+  return {
+    id: `history-${seller.sellerId}`,
+    avatar: SELLER_ICON,
+    title: seller.name,
+    subtitle: `${sellerStatus(seller).text}${categories}`,
+    action: { type: "OPEN_SELLER", payload: { sellerId: seller.sellerId } },
+  };
+}
+
+/** Панель истории просмотра (bottomSheet = "sellerHistory"): список последних
+ *  просмотренных продавцов, свежие сверху (порядок задаёт SellerHistoryStore). */
+function sellerHistoryBlocks(history: SellerHistoryEntry[]): ContentBlock[] {
+  if (history.length === 0) {
+    return [
+      { type: "sectionLabel", text: "История просмотра" },
+      { type: "empty", text: "Вы ещё не просматривали продавцов" },
+    ];
+  }
+  return [
+    { type: "sectionLabel", text: "История просмотра" },
+    { type: "list", items: history.map(historyRow) },
+  ];
+}
+
 export const MapSheetAdapter = {
   toBlocks(vm: MapViewModel): ContentBlock[] {
-    // Окна мастера «Поиск продавцов» обрабатываются раньше проверок состояния
-    // карты: их содержимое не зависит от загрузки видимой области.
+    // Окна мастера «Поиск продавцов» и история просмотра обрабатываются раньше
+    // проверок состояния карты: их содержимое не зависит от загрузки видимой
+    // области.
     if (vm.bottomSheet === "sellerSearchOrigin") {
       return searchOriginBlocks();
     }
     if (vm.bottomSheet === "sellerSearchResults") {
       return searchResultsBlocks(vm.sellerSearch);
+    }
+    if (vm.bottomSheet === "sellerHistory") {
+      return sellerHistoryBlocks(vm.sellerHistory);
     }
     // Карточка выбранного продавца — тоже до проверки пустой области: продавца
     // из результатов поиска (или восстановленного сеанса, searchResult) может

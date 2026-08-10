@@ -3,16 +3,20 @@ import type {
   BottomSheetState,
   GeoPoint,
   MapBounds,
+  ProductSearchState,
   SearchSuggestionsState,
   SellerMapRecord,
   SellerSearchState,
 } from "@/platform-core/map/viewmodels/MapViewModel";
 import type { CategoryOption } from "@/platform-core/map/repository/SellerRepository";
+import type { SearchMode, ProductNameSuggestion, ProductSellerMatch, ProductSearchResult } from "@/platform-core/map/product-search/ProductSearch";
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
 import { GeoService } from "@/platform-core/map/gis/GeoService";
-import { MockSellerRepository } from "@/platform-core/map/repository/MockSellerRepository";
+import { sellerRepository } from "@/platform-core/map/repository/repository";
 import { MapSessionStore } from "@/platform-core/map/persistence/MapSessionStore";
 import type { MapSessionSnapshot } from "@/platform-core/map/persistence/MapSessionStore";
+import { SellerHistoryStore } from "@/platform-core/map/persistence/SellerHistoryStore";
+import type { SellerHistoryEntry } from "@/platform-core/map/history/SellerHistory";
 import { Diagnostics } from "@/platform-core/diagnostics/Diagnostics";
 import {
   applySellerFilters,
@@ -104,6 +108,14 @@ export interface MapRuntimeState {
   /** Автодополнение строки поиска (MAP-019): подсказки по мере ввода.
    *  Актуально всегда; дропдаун в шапке показывает его содержимое. */
   searchSuggestions: SearchSuggestionsState;
+  /** Поиск по товарам (см. ProductSearchState в MapViewModel): режим строки
+   *  поиска + подсказки названий товаров / продавцов с ценой. */
+  productSearch: ProductSearchState;
+  /** История просмотра продавцов (снапшоты + время просмотра), свежие сверху.
+   *  Копия SellerHistoryStore: хранится здесь, чтобы карта знала о наличии
+   *  истории (кнопка-иконка) и рендерила панель без синхронного чтения
+   *  localStorage на каждый рендер. */
+  sellerHistory: SellerHistoryEntry[];
   mapCenter: GeoPoint;
   zoom: number;
   userLocation: GeoPoint | null;
@@ -145,7 +157,17 @@ export type MapRuntimeAction =
   | { type: "SELLER_SEARCH_ORIGIN_PICKED"; origin: GeoPoint; label: string }
   | { type: "SELLER_SEARCH_RADIUS_CHANGED"; radiusMeters: number }
   | { type: "SELLER_SEARCH_RESULT"; sellers: SellerMapRecord[] }
+  | { type: "SELLER_SEARCH_FAILED" }
   | { type: "SELLER_SEARCH_BACK" }
+  /* ======== История просмотра продавцов ========
+   *  SELLER_HISTORY_OPENED { history } — открыта панель истории: список
+   *    перечитан из SellerHistoryStore (панель может открыться после того,
+   *    как история пополнилась на странице продавца).
+   *  SELLER_HISTORY_UPDATED { history } — история обновлена (копия store в
+   *    state актуализирована при монтировании карты или после записи).
+   *  --------------------------------------------------------------- */
+  | { type: "SELLER_HISTORY_OPENED"; history: SellerHistoryEntry[] }
+  | { type: "SELLER_HISTORY_UPDATED"; history: SellerHistoryEntry[] }
   /* ======== Автодополнение строки поиска (MAP-019) ========
    *  SEARCH_SUGGESTIONS_START { query } — ввод изменился, запрос подсказок
    *    для нового query начат (оптимистично: спиннер в дропдауне виден с
@@ -161,6 +183,24 @@ export type MapRuntimeAction =
   | { type: "SEARCH_SUGGESTIONS_LOADED"; query: string; suggestions: SellerMapRecord[] }
   | { type: "SEARCH_SUGGESTIONS_FAILED" }
   | { type: "SEARCH_SUGGESTIONS_CLEARED" }
+  /* ======== Поиск по товарам (режим строки поиска) ========
+   *  SET_SEARCH_MODE { mode } — переключатель «по названию» / «по товару»:
+   *    сбрасывает обе группы подсказок.
+   *  PRODUCT_SEARCH_NAMES_START { query } — начат запрос автодополнения
+   *    названий товаров (оптимистичный спиннер; реальный запрос — после
+   *    дебаунса).
+   *  PRODUCT_SEARCH_NAMES_LOADED { query, suggestions } — прямые совпадения
+   *    названий; фаза "names" (подсказки дописывают название).
+   *  PRODUCT_SEARCH_SELLERS_LOADED { query, sellers, suggestedProduct } —
+   *    продавцы с ценой: после выбора названия, сабмита или «Возможно вы
+   *    имели в виду» (>85%) — фаза "sellers".
+   *  PRODUCT_SEARCH_CLEARED — поле очищено / режим сброшен.
+   *  ------------------------------------------------------------------- */
+  | { type: "SET_SEARCH_MODE"; mode: SearchMode }
+  | { type: "PRODUCT_SEARCH_NAMES_START"; query: string }
+  | { type: "PRODUCT_SEARCH_NAMES_LOADED"; query: string; suggestions: ProductNameSuggestion[] }
+  | { type: "PRODUCT_SEARCH_SELLERS_LOADED"; query: string; sellers: ProductSellerMatch[]; suggestedProduct: string | null }
+  | { type: "PRODUCT_SEARCH_CLEARED" }
   | { type: "AREA_LABEL_UPDATED"; label: string | null }
   | { type: "CATEGORIES_LOADED"; categories: CategoryOption[] }
   /* Универсальная смена фильтра: выбранные опции одной группы (например
@@ -189,8 +229,11 @@ export interface MapSessionInput {
  *  initialState в момент создания runtime. В окружениях без localStorage
  *  (Node/тесты) load() возвращает null — состояние остаётся базовым. */
 function withRestoredSession(base: MapRuntimeState): MapRuntimeState {
+  // История просмотра — отдельная сущность от сеанса карты (другой ключ в
+  // localStorage), поэтому читается всегда, независимо от наличия сеанса.
+  const restored: MapRuntimeState = { ...base, sellerHistory: SellerHistoryStore.load() };
   const session = MapSessionStore.load();
-  if (!session) return base;
+  if (!session) return restored;
   const sheet = session.bottomSheet;
   let selectedSellerId: SellerId | null = null;
   let searchResult: SellerMapRecord[] | null = null;
@@ -199,7 +242,7 @@ function withRestoredSession(base: MapRuntimeState): MapRuntimeState {
     searchResult = sheet.seller ? [sheet.seller] : null;
   }
   return {
-    ...base,
+    ...restored,
     mapCenter: session.viewport.center,
     zoom: session.viewport.zoom,
     selectedFilters: session.selectedFilters,
@@ -232,6 +275,7 @@ const initialState: MapRuntimeState = {
     radiusMeters: DEFAULT_SELLER_SEARCH_RADIUS_METERS,
     rawResults: null,
     results: [],
+    failed: false,
   },
   searchSuggestions: {
     query: "",
@@ -239,6 +283,16 @@ const initialState: MapRuntimeState = {
     rawSuggestions: [],
     suggestions: [],
   },
+  productSearch: {
+    mode: "name",
+    query: "",
+    loading: false,
+    phase: "names",
+    nameSuggestions: [],
+    sellers: [],
+    suggestedProduct: null,
+  },
+  sellerHistory: [],
   loading: false,
   error: false,
   currentAreaLabel: null,
@@ -411,6 +465,7 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
           originLabel: action.label,
           rawResults: null,
           results: [],
+          failed: false,
         },
       };
     case "SELLER_SEARCH_RADIUS_CHANGED":
@@ -419,10 +474,26 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
       return { ...state, sellerSearch: { ...state.sellerSearch, radiusMeters: action.radiusMeters } };
     case "SELLER_SEARCH_RESULT":
       // Сырые результаты от Repository; фильтр применяется к results ниже.
-      return withSearchResults({ ...state, sellerSearch: { ...state.sellerSearch, rawResults: action.sellers } });
+      return withSearchResults({
+        ...state,
+        sellerSearch: { ...state.sellerSearch, rawResults: action.sellers, failed: false },
+      });
+    case "SELLER_SEARCH_FAILED":
+      // Запрос результатов упал: мастер показывает errorRetry («Повторить»)
+      // вместо вечного скелетона (замечание №6 — явный error state мастера).
+      return {
+        ...state,
+        sellerSearch: { ...state.sellerSearch, failed: true, rawResults: [], results: [] },
+      };
     case "SELLER_SEARCH_BACK":
       // Возврат с экрана результатов к выбору точки: мастер остаётся открытым.
       return { ...state, selectedSellerId: null, bottomSheet: "sellerSearchOrigin" };
+    case "SELLER_HISTORY_OPENED":
+      // Открытие панели истории: список всегда перечитан из store (запись могла
+      // появиться на странице продавца), выбор продавца сбрасывается.
+      return { ...state, selectedSellerId: null, bottomSheet: "sellerHistory", sellerHistory: action.history };
+    case "SELLER_HISTORY_UPDATED":
+      return { ...state, sellerHistory: action.history };
     case "SEARCH_SUGGESTIONS_START":
       // Оптимистичный старт: запрос и подсказки обновляются сразу (спиннер в
       // дропдауне), реальный ответ придёт в SEARCH_SUGGESTIONS_LOADED.
@@ -449,6 +520,68 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
       };
     case "SEARCH_SUGGESTIONS_CLEARED":
       return { ...state, searchSuggestions: initialState.searchSuggestions };
+    case "SET_SEARCH_MODE": {
+      // Переключатель режима: сбрасываются обе группы подсказок (подсказки
+      // одного режима не должны мелькать в другом). Тот же режим — без изменений.
+      if (action.mode === state.productSearch.mode) return state;
+      return {
+        ...state,
+        searchSuggestions: initialState.searchSuggestions,
+        productSearch: { ...initialState.productSearch, mode: action.mode },
+      };
+    }
+    case "PRODUCT_SEARCH_NAMES_START":
+      // Оптимистичный старт: спиннер виден с первого символа, реальный вызов
+      // Repository — после дебаунса. Фаза "names" — подсказки названий товаров.
+      return {
+        ...state,
+        productSearch: {
+          ...state.productSearch,
+          query: action.query,
+          loading: true,
+          phase: "names",
+          nameSuggestions: [],
+          sellers: [],
+          suggestedProduct: null,
+        },
+      };
+    case "PRODUCT_SEARCH_NAMES_LOADED":
+      return {
+        ...state,
+        productSearch: {
+          ...state.productSearch,
+          query: action.query,
+          loading: false,
+          phase: "names",
+          nameSuggestions: action.suggestions,
+        },
+      };
+    case "PRODUCT_SEARCH_SELLERS_LOADED": {
+      // Продавцы с ценой: после выбора названия товара, сабмита или
+      // «Возможно вы имели в виду» (>85%) — фаза "sellers". Применяется тот же
+      // глобальный фильтр, что к карте/списку/мастеру (единая сущность): в
+      // подсказках видны только продавцы, проходящие текущий фильтр.
+      const filtered = applySellerFilters(
+        action.sellers.map((m) => m.seller),
+        buildSellerFilters(state.categories),
+        state.selectedFilters,
+      );
+      const filteredIds = new Set(filtered.map((s) => s.sellerId));
+      const sellers = action.sellers.filter((m) => filteredIds.has(m.seller.sellerId));
+      return {
+        ...state,
+        productSearch: {
+          ...state.productSearch,
+          query: action.query,
+          loading: false,
+          phase: "sellers",
+          sellers,
+          suggestedProduct: action.suggestedProduct,
+        },
+      };
+    }
+    case "PRODUCT_SEARCH_CLEARED":
+      return { ...state, productSearch: { ...state.productSearch, query: "", loading: false, phase: "names", nameSuggestions: [], sellers: [], suggestedProduct: null } };
     case "AREA_LABEL_UPDATED":
       return { ...state, currentAreaLabel: action.label };
     default:
@@ -494,8 +627,14 @@ function diagnosticsFor(action: MapRuntimeAction, nextState: MapRuntimeState): v
     case "SELLER_SEARCH_RESULT":
       Diagnostics.track("map.seller_search_results_shown", { resultCount: action.sellers.length });
       return;
+    case "SELLER_SEARCH_FAILED":
+      Diagnostics.track("map.seller_search_failed");
+      return;
     case "SELLER_SEARCH_BACK":
       Diagnostics.track("map.seller_search_back");
+      return;
+    case "SELLER_HISTORY_OPENED":
+      Diagnostics.track("map.seller_history_opened", { count: action.history.length });
       return;
     case "SEARCH_SUGGESTIONS_LOADED":
       Diagnostics.track("map.search_suggestions_shown", {
@@ -505,6 +644,16 @@ function diagnosticsFor(action: MapRuntimeAction, nextState: MapRuntimeState): v
       return;
     case "SEARCH_SUGGESTIONS_CLEARED":
       Diagnostics.track("map.search_suggestions_cleared");
+      return;
+    case "SET_SEARCH_MODE":
+      Diagnostics.track("map.search_mode_changed", { mode: action.mode });
+      return;
+    case "PRODUCT_SEARCH_SELLERS_LOADED":
+      Diagnostics.track("map.product_search_sellers_shown", {
+        query: action.query,
+        count: action.sellers.length,
+        suggested: Boolean(action.suggestedProduct),
+      });
       return;
     case "CATEGORIES_LOADED":
       Diagnostics.track("map.categories_loaded", { categoryCount: action.categories.length });
@@ -545,13 +694,15 @@ function createMapRuntime() {
   let sellerSearchSeq = 0;
   let searchSuggestionsTimer: ReturnType<typeof setTimeout> | null = null;
   let searchSuggestionsSeq = 0;
+  let productSearchTimer: ReturnType<typeof setTimeout> | null = null;
+  let productSearchSeq = 0;
 
   /** Фактическая загрузка продавцов (MAP-011): запрос Repository и применение
    *  ответа только если загрузка всё ещё последняя. */
   function loadVisibleSellersNow(bounds: MapBounds): void {
     const seq = ++visibleSellersSeq;
     dispatch({ type: "SELLERS_LOADING" });
-    void MockSellerRepository.getVisibleSellers(bounds)
+    void sellerRepository.getVisibleSellers(bounds)
       .then((visible) => {
         if (seq === visibleSellersSeq) dispatch({ type: "SELLERS_LOADED", sellers: visible });
       })
@@ -594,13 +745,17 @@ function createMapRuntime() {
     const search = state.sellerSearch;
     if (!search.origin) return;
     const seq = ++sellerSearchSeq;
-    void MockSellerRepository.searchSellersNear({
+    void sellerRepository.searchSellersNear({
       origin: search.origin,
       radiusMeters: search.radiusMeters,
       sort: { key: "distance" },
-    }).then((sellers) => {
-      if (seq === sellerSearchSeq) dispatch({ type: "SELLER_SEARCH_RESULT", sellers });
-    });
+    })
+      .then((sellers) => {
+        if (seq === sellerSearchSeq) dispatch({ type: "SELLER_SEARCH_RESULT", sellers });
+      })
+      .catch(() => {
+        if (seq === sellerSearchSeq) dispatch({ type: "SELLER_SEARCH_FAILED" });
+      });
   }
 
   /** Смена радиуса мастера: применяется сразу, перезапрос — после дебаунса
@@ -636,7 +791,7 @@ function createMapRuntime() {
     const seq = ++searchSuggestionsSeq;
     dispatch({ type: "SEARCH_SUGGESTIONS_START", query: q });
     searchSuggestionsTimer = setTimeout(() => {
-      void MockSellerRepository.searchSellers(q)
+      void sellerRepository.searchSellers(q)
         .then((suggestions) => {
           if (seq === searchSuggestionsSeq) dispatch({ type: "SEARCH_SUGGESTIONS_LOADED", query: q, suggestions });
         })
@@ -655,19 +810,139 @@ function createMapRuntime() {
     dispatch({ type: "SEARCH_SUGGESTIONS_CLEARED" });
   }
 
+  /** Переключение режима строки поиска («по названию» ↔ «по товару»).
+   *  Инвалидирует все незавершённые запросы обеих групп подсказок — ответы
+   *  прежнего режима не должны попасть в новый. */
+  function setSearchMode(mode: SearchMode): void {
+    searchSuggestionsSeq += 1;
+    productSearchSeq += 1;
+    if (searchSuggestionsTimer !== null) clearTimeout(searchSuggestionsTimer);
+    if (productSearchTimer !== null) clearTimeout(productSearchTimer);
+    dispatch({ type: "SET_SEARCH_MODE", mode });
+  }
+
+  /** Поиск продавцов по товару (после выбора названия товара, Enter или
+   *  «Возможно вы имели в виду»): запрос Repository и перевод подсказок в
+   *  фазу "sellers". Защита от гонок — seq, как у остальных запросов runtime. */
+  function requestProductSellers(query: string): void {
+    const q = query.trim();
+    if (!q) return;
+    productSearchSeq += 1;
+    if (productSearchTimer !== null) clearTimeout(productSearchTimer);
+    const seq = productSearchSeq;
+    dispatch({ type: "PRODUCT_SEARCH_NAMES_START", query: q });
+    void sellerRepository.searchSellersByProduct(q)
+      .then((result) => {
+        if (seq === productSearchSeq) {
+          dispatch({
+            type: "PRODUCT_SEARCH_SELLERS_LOADED",
+            query: q,
+            sellers: result.sellers,
+            suggestedProduct: result.suggestedProduct,
+          });
+        }
+      })
+      .catch(() => {
+        if (seq === productSearchSeq) {
+          dispatch({ type: "PRODUCT_SEARCH_SELLERS_LOADED", query: q, sellers: [], suggestedProduct: null });
+        }
+      });
+  }
+
+  /** Автодополнение товаров (поиск по товару): подсказки по мере ввода, с
+   *  дебаунсом и защитой от гонок — как requestSearchSuggestions (MAP-019).
+   *  Прямые совпадения названий/тегов → фаза "names" (дописать название).
+   *  Прямых нет, но есть товар со схожестью >85% → «Возможно вы имели в виду»:
+   *  сразу продавцы (фаза "sellers"). Иначе — пустые названия. */
+  function requestProductSuggestions(query: string): void {
+    const q = query.trim();
+    if (!q) {
+      productSearchSeq += 1;
+      if (productSearchTimer !== null) clearTimeout(productSearchTimer);
+      dispatch({ type: "PRODUCT_SEARCH_CLEARED" });
+      return;
+    }
+    if (productSearchTimer !== null) clearTimeout(productSearchTimer);
+    const seq = ++productSearchSeq;
+    dispatch({ type: "PRODUCT_SEARCH_NAMES_START", query: q });
+    productSearchTimer = setTimeout(() => {
+      void sellerRepository.searchProductNames(q)
+        .then((names) => {
+          if (seq !== productSearchSeq) return;
+          if (names.length > 0) {
+            dispatch({ type: "PRODUCT_SEARCH_NAMES_LOADED", query: q, suggestions: names });
+            return;
+          }
+          // Прямых совпадений нет — пробуем «Возможно вы имели в виду» (>85%):
+          // подсказки сразу становятся продавцами этого товара.
+          void sellerRepository.searchSellersByProduct(q)
+            .then((result: ProductSearchResult) => {
+              if (seq !== productSearchSeq) return;
+              dispatch({
+                type: "PRODUCT_SEARCH_SELLERS_LOADED",
+                query: q,
+                sellers: result.sellers,
+                suggestedProduct: result.suggestedProduct,
+              });
+            })
+            .catch(() => {
+              if (seq === productSearchSeq) dispatch({ type: "PRODUCT_SEARCH_NAMES_LOADED", query: q, suggestions: [] });
+            });
+        })
+        .catch(() => {
+          if (seq === productSearchSeq) dispatch({ type: "PRODUCT_SEARCH_NAMES_LOADED", query: q, suggestions: [] });
+        });
+    }, SEARCH_SUGGESTIONS_DEBOUNCE_MS);
+  }
+
+  /** Сброс товарного поиска (выбор продавца / очистка поля): отменяет
+   *  отложенный запрос и инвалидирует в полёте незавершённый. */
+  function clearProductSearch(): void {
+    productSearchSeq += 1;
+    if (productSearchTimer !== null) clearTimeout(productSearchTimer);
+    dispatch({ type: "PRODUCT_SEARCH_CLEARED" });
+  }
+
   /** Поиск продавца по имени из строки поиска (MAP-053). Кладёт результат в
    *  state.searchResult и возвращает найденного продавца (null — не найден). */
   async function searchSellerByName(query: string): Promise<SellerMapRecord | null> {
-    const found = await MockSellerRepository.findSeller(query);
+    const found = await sellerRepository.findSeller(query);
     dispatch({ type: "SEARCH_RESULT", sellers: found ? [found] : [] });
     return found;
   }
 
   /** Загрузка категорий для фильтра — источник опций группы «Категория». */
   function loadCategories(): void {
-    void MockSellerRepository.getCategories().then((categories) => {
+    void sellerRepository.getCategories().then((categories) => {
       dispatch({ type: "CATEGORIES_LOADED", categories });
     });
+  }
+
+  /** Свежие данные продавца для открытой карточки (замечание №4): при
+   *  восстановлении сеанса карточка сначала показывает мгновенный снапшот из
+   *  searchResult, но параллельно запрашивается актуальная запись у Repository —
+   *  иначе устаревшие isOpenNow/rating/distance были бы показаны как текущие.
+   *  getSeller возвращает null, если продавца больше нет, — карточка остаётся
+   *  со снапшотом (или закрывается штатным findSellerData). */
+  function requestSellerRefresh(sellerId: SellerId): void {
+    void sellerRepository.getSeller(sellerId).then((seller) => {
+      if (seller) dispatch({ type: "SEARCH_RESULT", sellers: [seller] });
+    });
+  }
+
+  /** Открытие панели истории просмотра: список перечитывается из
+   *  SellerHistoryStore (панель может открыться после того, как история
+   *  пополнилась на странице продавца), затем диспатчится SELLER_HISTORY_OPENED. */
+  function openSellerHistory(): void {
+    dispatch({ type: "SELLER_HISTORY_OPENED", history: SellerHistoryStore.load() });
+  }
+
+  /** Актуализация копии истории в state (SELLER_HISTORY_UPDATED). Вызывается
+   *  при монтировании карты: запись могла появиться на странице продавца,
+   *  пока карта была размонтирована, — чтобы кнопка-иконка истории появилась
+   *  сразу, а не только после открытия панели. */
+  function refreshSellerHistory(): void {
+    dispatch({ type: "SELLER_HISTORY_UPDATED", history: SellerHistoryStore.load() });
   }
 
   /** Экспорт текущего состояния в снапшот сеанса (MapSessionStore). Домен
@@ -703,6 +978,13 @@ function createMapRuntime() {
     };
   }
 
+  // При восстановлении открытой карточки продавца (sellerSummary) мгновенно
+  // рендерим снапшот сеанса, но тут же запрашиваем актуальные данные —
+  // замечание №4: isOpenNow/rating/distance не должны оставаться устаревшими.
+  if (state.bottomSheet === "sellerSummary" && state.selectedSellerId !== null) {
+    requestSellerRefresh(state.selectedSellerId);
+  }
+
   return {
     getState: (): MapRuntimeState => state,
     dispatch,
@@ -719,7 +1001,14 @@ function createMapRuntime() {
     searchSellerByName,
     requestSearchSuggestions,
     clearSearchSuggestions,
+    setSearchMode,
+    requestProductSuggestions,
+    requestProductSellers,
+    clearProductSearch,
     loadCategories,
+    requestSellerRefresh,
+    openSellerHistory,
+    refreshSellerHistory,
     toSessionSnapshot,
   };
 }

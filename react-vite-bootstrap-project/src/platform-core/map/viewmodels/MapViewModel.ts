@@ -1,6 +1,8 @@
 import type { SellerId } from "@/platform-core/contracts/Action";
 import type { CategoryId } from "@/platform-core/contracts/DomainTypes";
 import type { ViewState } from "@/platform-core/contracts/ViewState";
+import type { SellerHistoryEntry } from "@/platform-core/map/history/SellerHistory";
+import type { SearchMode, ProductNameSuggestion, ProductSellerMatch } from "@/platform-core/map/product-search/ProductSearch";
 
 /** Географическая точка WGS84 (EPSG:4326) — см. IMP-003.1 §2 "Координаты". */
 export interface GeoPoint {
@@ -84,9 +86,41 @@ export interface SellerSearchState {
   rawResults: SellerMapRecord[] | null;
   /** Видимые результаты = rawResults, пропущенные через глобальный фильтр. */
   results: SellerMapRecord[];
+  /** true — последний запрос результатов упал (SELLER_SEARCH_FAILED): вместо
+   *  вечного скелетона мастер показывает errorRetry («Повторить»). Сбрасывается
+   *  при новом запросе/смене точки. */
+  failed: boolean;
 }
 
-export type BottomSheetState = "hidden" | "sellerSummary" | "sellerSearchOrigin" | "sellerSearchResults";
+export type BottomSheetState =
+  | "hidden"
+  | "sellerSummary"
+  | "sellerSearchOrigin"
+  | "sellerSearchResults"
+  | "sellerHistory";
+
+/** Состояние поиска по товарам (режим строки поиска). Пользователь может
+ *  переключать строку поиска между «по названию продавца» и «по товару»
+ *  (кнопка-переключатель под полем при пустом тексте).
+ *
+ *  В режиме product фаза "names" — подсказки дописывают название товара
+ *  (автодополнение); фаза "sellers" — после выбора названия (или срабатывания
+ *  «Возможно вы имели в виду») подсказки становятся продавцами с ценой на
+ *  товар. suggestedProduct — товар, предложенный системой «Возможно вы имели
+ *  в виду» (схожесть >85%), когда прямых совпадений по запросу не было. */
+export interface ProductSearchState {
+  /** Активный режим строки поиска. */
+  mode: SearchMode;
+  /** Запрос, для которого актуальны loading/nameSuggestions/sellers. */
+  query: string;
+  /** Идёт ли запрос подсказок/продавцов (спиннер в дропдауне). */
+  loading: boolean;
+  /** "names" — подсказки названий товаров; "sellers" — продавцы с ценой. */
+  phase: "names" | "sellers";
+  nameSuggestions: ProductNameSuggestion[];
+  sellers: ProductSellerMatch[];
+  suggestedProduct: string | null;
+}
 
 /** Доменный контракт экрана Map (IMP-003.1 §10 "ViewModel"). Ничего не знает
  *  про Leaflet/react-leaflet — та часть инкапсулирована в map/gis/. */
@@ -106,7 +140,14 @@ export interface MapViewModel {
    *  когда bottomSheet = sellerSearchOrigin/sellerSearchResults. */
   sellerSearch: SellerSearchState;
   /** Автодополнение строки поиска (MAP-019). Всегда актуально; дропдаун
-   *  показывает подсказки по мере ввода. */
+   *  показывает подсказки по мере ввода в режиме «по названию». */
   searchSuggestions: SearchSuggestionsState;
+  /** Поиск по товарам: режим строки поиска + подсказки названий/продавцов
+   *  (активно в режиме product, см. ProductSearchState выше). */
+  productSearch: ProductSearchState;
+  /** История просмотра продавцов (снапшоты + время просмотра), свежие сверху.
+   *  Показывается в панели bottomSheet = "sellerHistory"; пустой список —
+   *  кнопка истории на карте скрыта (см. MapScreenView). */
+  sellerHistory: SellerHistoryEntry[];
   currentAreaLabel: string | null;
 }

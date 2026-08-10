@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, Marker, CircleMarker, useMap, useMapEvents } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
@@ -26,7 +26,22 @@ const GLOW_BOOST_BY_ZOOM: Record<number, number> = {
   19: 2,
 };
 
-function sellerDivIcon(selected: boolean, available: boolean, sellerId: string, zoom: number): L.DivIcon {
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function sellerDivIcon(
+  name: string,
+  selected: boolean,
+  available: boolean,
+  sellerId: string,
+  zoom: number,
+): L.DivIcon {
   // Доступные продавцы — светло-зелёные со свечением, чтобы выделяться на фоне
   // посторонних заведений карты (GM-UX-001). Цвет ореола взят из токена через
   // color-mix, поэтому следует теме (light/dark) без отдельного токена.
@@ -58,7 +73,7 @@ function sellerDivIcon(selected: boolean, available: boolean, sellerId: string, 
       : `0 1px 4px rgba(0,0,0,0.35), 0 0 0 ${Math.round(2 * scale)}px color-mix(in srgb, var(--color-disabled-content) 50%, transparent), 0 0 ${Math.round(9 * scale)}px ${Math.round(2 * scale)}px color-mix(in srgb, var(--color-disabled-content) 40%, transparent)`;
   return L.divIcon({
     className: "gm-map-marker",
-    html: `<span data-testid="seller-marker" data-seller-id="${sellerId}" style="display:block;width:${selected ? 20 : 14}px;height:${selected ? 20 : 14}px;border-radius:999px;background:${bg};border:2px solid white;box-shadow:${glow};"></span>`,
+    html: `<span class="gm-map-marker__label">${escapeHtml(name)}</span><span data-testid="seller-marker" data-seller-id="${sellerId}" style="display:block;width:${selected ? 20 : 14}px;height:${selected ? 20 : 14}px;border-radius:999px;background:${bg};border:2px solid white;box-shadow:${glow};"></span>`,
     iconSize: [selected ? 24 : 18, selected ? 24 : 18],
     iconAnchor: [selected ? 12 : 9, selected ? 12 : 9],
   });
@@ -138,6 +153,59 @@ function CenterRequestBridge({ token, camera }: { token: number; camera: MapAdap
   return null;
 }
 
+/** MAP-068: подписи названий над точками не должны накладываться друг на
+ *  друга. Каждый пересчёт (конец движения/зума, появление/исчезновение
+ *  маркеров при кластеризации или spiderfy) проходит в два шага:
+ *  1) показать все подписи (скрытая с display:none имеет нулевой bounding
+ *     box и не участвует в пересечениях, пока класс не снят);
+ *  2) жадный проход по подписям в порядке DOM (т.е. в порядке каталога):
+ *     первая из конфликтующей пары остаётся видимой, вторая получает класс
+ *     .gm-map-marker__label--hidden и исчезает. При приближении подписи
+ *     разъезжаются, конфликт пропадает и скрытая снова появляется. */
+function LabelCollisionBridge() {
+  const map = useMap();
+
+  const recompute = useCallback(() => {
+    const labels = Array.from(
+      map.getContainer().querySelectorAll<HTMLElement>(".gm-map-marker__label"),
+    );
+    for (const label of labels) label.classList.remove("gm-map-marker__label--hidden");
+    const hidden = new Set<HTMLElement>();
+    for (let i = 0; i < labels.length; i++) {
+      const a = labels[i];
+      if (hidden.has(a)) continue;
+      const ra = a.getBoundingClientRect();
+      for (let j = i + 1; j < labels.length; j++) {
+        const b = labels[j];
+        if (hidden.has(b)) continue;
+        const rb = b.getBoundingClientRect();
+        const intersects =
+          ra.left < rb.right && ra.right > rb.left && ra.top < rb.bottom && ra.bottom > rb.top;
+        if (intersects) hidden.add(b);
+      }
+    }
+    for (const label of labels) {
+      label.classList.toggle("gm-map-marker__label--hidden", hidden.has(label));
+    }
+  }, [map]);
+
+  useEffect(() => {
+    recompute();
+    map.on("moveend zoomend", recompute);
+    // Подписи появляются/исчезают вместе с DOM маркеров (кластеризация,
+    // spiderfy, пересоздание иконок при зуме) — там событий moveend/zoomend
+    // может не быть, MutationObserver ловит изменения состава маркеров.
+    const observer = new MutationObserver(() => requestAnimationFrame(recompute));
+    observer.observe(map.getContainer(), { subtree: true, childList: true });
+    return () => {
+      map.off("moveend zoomend", recompute);
+      observer.disconnect();
+    };
+  }, [map, recompute]);
+
+  return null;
+}
+
 export function LeafletAdapter({
   sellers,
   selectedSellerId,
@@ -182,6 +250,7 @@ export function LeafletAdapter({
           onMapBackgroundClick={onMapBackgroundClick}
         />
         <CenterRequestBridge token={centerRequestToken} camera={camera} />
+        <LabelCollisionBridge />
 
         {userLocation && (
           <CircleMarker
@@ -211,7 +280,7 @@ export function LeafletAdapter({
             <Marker
               key={seller.sellerId}
               position={[seller.location.lat, seller.location.lng]}
-              icon={sellerDivIcon(seller.sellerId === selectedSellerId, seller.isAvailable, seller.sellerId, camera.zoom)}
+              icon={sellerDivIcon(seller.name, seller.sellerId === selectedSellerId, seller.isAvailable, seller.sellerId, camera.zoom)}
               eventHandlers={{ click: () => onSellerSelect(seller.sellerId) }}
             />
           ))}

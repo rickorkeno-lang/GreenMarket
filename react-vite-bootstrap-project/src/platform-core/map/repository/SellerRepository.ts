@@ -1,13 +1,30 @@
 import type { SellerId } from "@/platform-core/contracts/Action";
-import type { CategoryId } from "@/platform-core/contracts/DomainTypes";
+import type { CategoryId, ProductRecord } from "@/platform-core/contracts/DomainTypes";
 import type { GeoPoint, MapBounds, SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
 import type { SellerCardViewModel } from "@/platform-core/viewmodels/SellerCardViewModel";
-import type { SellerProductRecord } from "@/platform-core/map/repository/mockSellerCatalog";
 import type { RecommendedSeller } from "@/platform-core/map/recommendations/SellerRecommendations";
+import type { ProductNameSuggestion, ProductSearchResult } from "@/platform-core/map/product-search/ProductSearch";
 
 export interface CategoryOption {
   categoryId: CategoryId;
   name: string;
+}
+
+/** Товар продавца на странице SellerCard (ТЗ-025): расширяет доменный
+ *  ProductRecord (id/name/price/unit/availability) полями, которые нужны
+ *  странице для красивого вывода: categoryId (для группировки/эмодзи),
+ *  emoji и description. Тип определён в контракте, а не в mock-каталоге
+ *  (замечание ревью №14): экран и репозиторий работают с ним независимо от
+ *  реализации источника данных.
+ *
+ *  tags — ключевые слова для поиска по товару (синонимы/варианты написания).
+ *  Страница продавца их не показывает, но поиск по товарам строится на них
+ *  (см. platform-core/map/product-search/ProductSearch.ts). */
+export interface SellerProductRecord extends ProductRecord {
+  categoryId: CategoryId;
+  emoji: string;
+  description: string;
+  tags: string[];
 }
 
 /** Ключ сортировки результатов «Поиска продавцов» (MAP-053/MAP-018). Сейчас
@@ -81,4 +98,10 @@ export interface SellerRepository {
   /** Похожие продавцы: сначала все общие категории, затем по убыванию числа
    *  общих — см. rankRecommendedSellers. */
   getRecommendedSellers(id: SellerId): Promise<RecommendedSeller[]>;
+  /* ====== Поиск продавцов по товарам (см. platform-core/map/product-search) ======
+   * Два метода: автодополнение названий товаров (подсказки «допиши название»)
+   * и поиск продавцов по товару. Продавцы в результатах отсортированы по
+   * расстоянию, как в обычном поиске; цена на товар прилагается к каждому. */
+  searchProductNames(query: string): Promise<ProductNameSuggestion[]>;
+  searchSellersByProduct(query: string): Promise<ProductSearchResult>;
 }
