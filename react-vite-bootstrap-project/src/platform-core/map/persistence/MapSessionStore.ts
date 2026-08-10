@@ -49,12 +49,20 @@ const STORAGE_KEY = "gm.map.session.v1";
 
 /** Периодическое сохранение сеанса (best-effort): MapScreenView подписан на
  *  изменения runtime и вызывает saveThrottled — пишем не чаще раза в интервал,
- *  а не на каждый moveend/SELLERS_LOADED. Это страховка на случай, если
- *  сохранение при закрытии страницы/уходе с экрана не успеет выполниться;
- *  основное сохранение — там же (см. MapScreenView). */
+ *  а не на каждый moveend/SELLERS_LOADED. Троттлинг с trailing-записью:
+ *  последний недописанный снапшот сохраняется по окончании интервала, чтобы
+ *  закрытие вкладки внутри интервала не оставило в localStorage устаревшее
+ *  состояние. Это страховка на случай, если сохранение при закрытии
+ *  страницы/уходе с экрана не успеет выполниться; основное сохранение — там же
+ *  (см. MapScreenView). */
 const THROTTLE_SAVE_INTERVAL_MS = 2_000;
 
 let lastThrottledSaveAt = 0;
+/** Последний снапшот, не записанный из-за троттлинга (trailing-запись). Без
+ *  него при закрытии вкладки внутри интервала в localStorage остался бы
+ *  снапшот начала интервала (замечание ревью «теряется последнее изменение»). */
+let pendingThrottledSnapshot: MapSessionSnapshot | null = null;
+let pendingThrottledTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** СТОРОНА СОСТОЯНИЯ (замечание №1): Store — только сериализация/десериализация
  *  сеанса. Источником текущего состояния является MapRuntime (singleton,
@@ -204,11 +212,30 @@ export const MapSessionStore = {
   /** Периодическое сохранение во время сеанса (см. THROTTLE_SAVE_INTERVAL_MS):
    *  поддерживает снапшот актуальным, даже если закрытие страницы не
    *  наступит, не дёргая localStorage на каждый moveend. Вызывается из
-   *  подписки на изменения runtime в MapScreenView. */
+   *  подписки на изменения runtime в MapScreenView.
+   *
+   *  Троттлинг с trailing-записью: ведущий вызов пишет сразу, вызовы внутри
+   *  интервала запоминают последний снапшот, который пишется по окончании
+   *  интервала. Иначе быстрое перемещение карты внутри окна теряло последнее
+   *  состояние (в localStorage остался бы снапшот начала окна). */
   saveThrottled(snapshot: MapSessionSnapshot): void {
+    pendingThrottledSnapshot = snapshot;
+    if (pendingThrottledTimer !== null) return;
     const now = Date.now();
-    if (now - lastThrottledSaveAt < THROTTLE_SAVE_INTERVAL_MS) return;
-    lastThrottledSaveAt = now;
-    this.save(snapshot);
+    const elapsed = now - lastThrottledSaveAt;
+    if (elapsed >= THROTTLE_SAVE_INTERVAL_MS) {
+      lastThrottledSaveAt = now;
+      pendingThrottledSnapshot = null;
+      this.save(snapshot);
+      return;
+    }
+    pendingThrottledTimer = setTimeout(() => {
+      pendingThrottledTimer = null;
+      if (pendingThrottledSnapshot) {
+        lastThrottledSaveAt = Date.now();
+        this.save(pendingThrottledSnapshot);
+        pendingThrottledSnapshot = null;
+      }
+    }, THROTTLE_SAVE_INTERVAL_MS - elapsed);
   },
 };

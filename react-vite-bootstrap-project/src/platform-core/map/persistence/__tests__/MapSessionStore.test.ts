@@ -180,7 +180,11 @@ async function run() {
   assert.equal(storage.has("gm.map.session.v1"), true, "save пишет в localStorage");
   assert.deepEqual(MapSessionStore.load(), snapshot, "load возвращает сохранённый снапшот");
 
-  // saveThrottled: два вызова подряд в пределах интервала — одна запись.
+  // saveThrottled — троттлинг с trailing-записью: ведущий вызов в окне пишет
+  // сразу, вызовы внутри интервала запоминают последний снапшот и пишут его
+  // по истечении интервала БЕЗ дополнительного вызова (дефект «теряется
+  // последнее изменение» закрыт: в localStorage не остаётся снапшот начала
+  // окна, когда вкладка закрылась до следующего разрешённого вызова).
   const writesBefore = writeCount;
   const variantA = { ...snapshot, viewport: { ...snapshot.viewport, zoom: 12 } };
   const variantB = { ...snapshot, viewport: { ...snapshot.viewport, zoom: 11 } };
@@ -189,26 +193,46 @@ async function run() {
   assert.equal(
     writeCount,
     writesBefore + 1,
-    "saveThrottled внутри интервала пишет один раз",
+    "ведущий вызов в окне пишет сразу",
   );
   assert.equal(
     MapSessionStore.load()?.viewport.zoom,
     12,
-    "первый троттлированный вызов применился",
+    "ведущий вызов применился",
   );
 
-  // По истечении интервала следующий вызов пишет снова.
-  await new Promise((resolve) => setTimeout(resolve, 2_100));
-  MapSessionStore.saveThrottled(variantB);
+  // По истечении интервала trailing-запись сохраняет ПОСЛЕДНИЙ снапшот.
+  await new Promise((resolve) => setTimeout(resolve, 2_300));
   assert.equal(
     writeCount,
     writesBefore + 2,
-    "saveThrottled после интервала пишет снова",
+    "trailing-запись сработала по таймеру без дополнительного вызова",
   );
   assert.equal(
     MapSessionStore.load()?.viewport.zoom,
     11,
-    "второй троттлированный вызов применился",
+    "последний снапшот сохранён (не начало окна)",
+  );
+
+  // Следующий вызов после trailing-записи перезапускает окно (trailing-запись
+  // не «пробивает» мгновенную запись) — но последнее изменение снова не
+  // теряется: оно пишется по окончании нового окна.
+  MapSessionStore.saveThrottled(variantA);
+  assert.equal(
+    writeCount,
+    writesBefore + 2,
+    "вызов сразу после trailing-записи не пишет мгновенно (окно перезапущено)",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 2_300));
+  assert.equal(
+    writeCount,
+    writesBefore + 3,
+    "trailing-запись нового окна сохранила последний вызов",
+  );
+  assert.equal(
+    MapSessionStore.load()?.viewport.zoom,
+    12,
+    "последний снапшот сохранён",
   );
 
   console.log("MapSessionStore: все проверки пройдены");

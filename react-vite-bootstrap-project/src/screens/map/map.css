@@ -237,6 +237,22 @@
   padding: var(--space-sm) var(--space-md);
 }
 
+.gm-map-search__retry {
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0 var(--space-sm);
+  color: var(--color-text-link);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--easing-standard);
+}
+
+.gm-map-search__retry:hover {
+  background: var(--color-hover-overlay);
+}
+
 .gm-map-search__suggestion {
   display: flex;
   align-items: center;

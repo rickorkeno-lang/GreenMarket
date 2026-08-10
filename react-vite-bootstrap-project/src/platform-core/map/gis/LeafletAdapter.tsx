@@ -158,36 +158,61 @@ function CenterRequestBridge({ token, camera }: { token: number; camera: MapAdap
  *  маркеров при кластеризации или spiderfy) проходит в два шага:
  *  1) показать все подписи (скрытая с display:none имеет нулевой bounding
  *     box и не участвует в пересечениях, пока класс не снят);
- *  2) жадный проход по подписям в порядке DOM (т.е. в порядке каталога):
- *     первая из конфликтующей пары остаётся видимой, вторая получает класс
- *     .gm-map-marker__label--hidden и исчезает. При приближении подписи
- *     разъезжаются, конфликт пропадает и скрытая снова появляется. */
-function LabelCollisionBridge() {
+ *  2) жадный проход по подписям в порядке приоритета — выбранный продавец,
+ *     затем ближайшая к центру экрана, затем порядок DOM. Порядок каталога
+ *     Repository намеренно НЕ является сигналом приоритета (замечание ревью):
+ *     при конфликте двух подписей выигрывает осмысленная, а не случайная
+ *     (первая в DOM). Проигравшая получает класс .gm-map-marker__label--hidden
+ *     и исчезает. При приближении подписи разъезжаются, конфликт пропадает и
+ *     скрытая снова появляется. */
+function LabelCollisionBridge({
+  selectedSellerId,
+}: {
+  selectedSellerId: MapAdapterProps["selectedSellerId"];
+}) {
   const map = useMap();
 
   const recompute = useCallback(() => {
+    const container = map.getContainer();
     const labels = Array.from(
-      map.getContainer().querySelectorAll<HTMLElement>(".gm-map-marker__label"),
+      container.querySelectorAll<HTMLElement>(".gm-map-marker__label"),
     );
     for (const label of labels) label.classList.remove("gm-map-marker__label--hidden");
+
+    // Приоритет: выбранный продавец → ближайшая к центру экрана → порядок DOM
+    // (стабильный tiebreaker, чтобы результат был детерминирован).
+    const containerRect = container.getBoundingClientRect();
+    const centerX = containerRect.left + containerRect.width / 2;
+    const centerY = containerRect.top + containerRect.height / 2;
+    const ordered = labels
+      .map((el, index) => {
+        const sellerId =
+          el.parentElement?.querySelector("[data-seller-id]")?.getAttribute("data-seller-id") ?? null;
+        const rect = el.getBoundingClientRect();
+        const dx = rect.left + rect.width / 2 - centerX;
+        const dy = rect.top + rect.height / 2 - centerY;
+        return { el, selected: sellerId !== null && sellerId === selectedSellerId, distSq: dx * dx + dy * dy, index };
+      })
+      .sort((a, b) => Number(b.selected) - Number(a.selected) || a.distSq - b.distSq || a.index - b.index);
+
     const hidden = new Set<HTMLElement>();
-    for (let i = 0; i < labels.length; i++) {
-      const a = labels[i];
-      if (hidden.has(a)) continue;
-      const ra = a.getBoundingClientRect();
-      for (let j = i + 1; j < labels.length; j++) {
-        const b = labels[j];
-        if (hidden.has(b)) continue;
-        const rb = b.getBoundingClientRect();
+    for (let i = 0; i < ordered.length; i++) {
+      const a = ordered[i];
+      if (hidden.has(a.el)) continue;
+      const ra = a.el.getBoundingClientRect();
+      for (let j = i + 1; j < ordered.length; j++) {
+        const b = ordered[j];
+        if (hidden.has(b.el)) continue;
+        const rb = b.el.getBoundingClientRect();
         const intersects =
           ra.left < rb.right && ra.right > rb.left && ra.top < rb.bottom && ra.bottom > rb.top;
-        if (intersects) hidden.add(b);
+        if (intersects) hidden.add(b.el);
       }
     }
     for (const label of labels) {
       label.classList.toggle("gm-map-marker__label--hidden", hidden.has(label));
     }
-  }, [map]);
+  }, [map, selectedSellerId]);
 
   useEffect(() => {
     recompute();
@@ -250,7 +275,7 @@ export function LeafletAdapter({
           onMapBackgroundClick={onMapBackgroundClick}
         />
         <CenterRequestBridge token={centerRequestToken} camera={camera} />
-        <LabelCollisionBridge />
+        <LabelCollisionBridge selectedSellerId={selectedSellerId} />
 
         {userLocation && (
           <CircleMarker

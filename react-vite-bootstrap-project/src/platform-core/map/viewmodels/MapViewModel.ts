@@ -120,6 +120,10 @@ export interface ProductSearchState {
   nameSuggestions: ProductNameSuggestion[];
   sellers: ProductSellerMatch[];
   suggestedProduct: string | null;
+  /** true — последний запрос подсказок/продавцов упал (PRODUCT_SEARCH_FAILED):
+   *  дропдаун показывает ошибку отдельно от «ничего не найдено». Сбрасывается
+   *  при новом запросе, очистке или смене режима. */
+  failed: boolean;
 }
 
 /** Доменный контракт экрана Map (IMP-003.1 §10 "ViewModel"). Ничего не знает

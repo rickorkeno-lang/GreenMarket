@@ -296,15 +296,32 @@ export function MapSearchAutocomplete({
               </div>
             )}
 
+            {/* Ошибка запроса: отличается от пустого результата («товара нет» /
+                «продавцов нет») — retry по текущей фазе (подсказки или продавцы). */}
+            {!loading && productSearch.failed && (
+              <div className="gm-map-search__status" role="alert">
+                <Text variant="caption" tone="secondary">
+                  Не удалось выполнить поиск
+                </Text>
+                <button
+                  type="button"
+                  className="gm-map-search__retry gm-focusable"
+                  onClick={() => (productSearch.phase === 'names' ? onQueryChange(query) : onSubmit(query))}
+                >
+                  Повторить
+                </button>
+              </div>
+            )}
+
             {/* «Возможно вы имели в виду»: прямых совпадений нет, но система
                 предложила товар по схожести (>85%) — сразу продавцы с ценой. */}
-            {!loading && searchMode === 'product' && productSearch.phase === 'sellers' && productSearch.suggestedProduct && (
+            {!loading && !productSearch.failed && searchMode === 'product' && productSearch.phase === 'sellers' && productSearch.suggestedProduct && (
               <div className="gm-map-search__did-you-mean" data-testid="map-search-did-you-mean">
                 Возможно вы имели в виду: «{productSearch.suggestedProduct}»
               </div>
             )}
 
-            {!loading && options.length === 0 && (
+            {!loading && !productSearch.failed && options.length === 0 && (
               <div className="gm-map-search__status">
                 <Text variant="caption" tone="secondary">
                   {searchMode === 'name' && suggestionsState.rawSuggestions.length > 0

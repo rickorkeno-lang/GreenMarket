@@ -191,15 +191,23 @@ export type MapRuntimeAction =
    *    дебаунса).
    *  PRODUCT_SEARCH_NAMES_LOADED { query, suggestions } — прямые совпадения
    *    названий; фаза "names" (подсказки дописывают название).
+   *  PRODUCT_SEARCH_SELLERS_START { query } — начат запрос продавцов по
+   *    товару (сабмит, выбор названия, «Возможно вы имели в виду» (>85%)):
+   *    фаза "sellers", спиннер до ответа Repository.
    *  PRODUCT_SEARCH_SELLERS_LOADED { query, sellers, suggestedProduct } —
    *    продавцы с ценой: после выбора названия, сабмита или «Возможно вы
    *    имели в виду» (>85%) — фаза "sellers".
+   *  PRODUCT_SEARCH_FAILED { query } — запрос подсказок или продавцов упал:
+   *    дропдаун показывает ошибку (не пустой результат), в отличие от
+   *    «ничего не найдено» и «товар есть, но продавцов нет».
    *  PRODUCT_SEARCH_CLEARED — поле очищено / режим сброшен.
    *  ------------------------------------------------------------------- */
   | { type: "SET_SEARCH_MODE"; mode: SearchMode }
   | { type: "PRODUCT_SEARCH_NAMES_START"; query: string }
   | { type: "PRODUCT_SEARCH_NAMES_LOADED"; query: string; suggestions: ProductNameSuggestion[] }
+  | { type: "PRODUCT_SEARCH_SELLERS_START"; query: string }
   | { type: "PRODUCT_SEARCH_SELLERS_LOADED"; query: string; sellers: ProductSellerMatch[]; suggestedProduct: string | null }
+  | { type: "PRODUCT_SEARCH_FAILED"; query: string }
   | { type: "PRODUCT_SEARCH_CLEARED" }
   | { type: "AREA_LABEL_UPDATED"; label: string | null }
   | { type: "CATEGORIES_LOADED"; categories: CategoryOption[] }
@@ -291,6 +299,7 @@ const initialState: MapRuntimeState = {
     nameSuggestions: [],
     sellers: [],
     suggestedProduct: null,
+    failed: false,
   },
   sellerHistory: [],
   loading: false,
@@ -543,6 +552,23 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
           nameSuggestions: [],
           sellers: [],
           suggestedProduct: null,
+          failed: false,
+        },
+      };
+    case "PRODUCT_SEARCH_SELLERS_START":
+      // Оптимистичный старт поиска продавцов по товару: фаза "sellers",
+      // спиннер до ответа Repository. Не трогает nameSuggestions и не откатывает
+      // фазу в "names" (в отличие от NAMES_START).
+      return {
+        ...state,
+        productSearch: {
+          ...state.productSearch,
+          query: action.query,
+          loading: true,
+          phase: "sellers",
+          sellers: [],
+          suggestedProduct: null,
+          failed: false,
         },
       };
     case "PRODUCT_SEARCH_NAMES_LOADED":
@@ -554,6 +580,7 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
           loading: false,
           phase: "names",
           nameSuggestions: action.suggestions,
+          failed: false,
         },
       };
     case "PRODUCT_SEARCH_SELLERS_LOADED": {
@@ -577,11 +604,29 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
           phase: "sellers",
           sellers,
           suggestedProduct: action.suggestedProduct,
+          failed: false,
         },
       };
     }
+    case "PRODUCT_SEARCH_FAILED":
+      // Запрос подсказок/продавцов упал: дропдаун показывает ошибку отдельно
+      // от пустого результата (пользователь отличает «сломалось» от «ничего
+      // не найдено»). Паттерн — как SELLER_SEARCH_FAILED для мастера поиска.
+      return {
+        ...state,
+        productSearch: {
+          ...state.productSearch,
+          query: action.query,
+          loading: false,
+          phase: state.productSearch.phase,
+          nameSuggestions: [],
+          sellers: [],
+          suggestedProduct: null,
+          failed: true,
+        },
+      };
     case "PRODUCT_SEARCH_CLEARED":
-      return { ...state, productSearch: { ...state.productSearch, query: "", loading: false, phase: "names", nameSuggestions: [], sellers: [], suggestedProduct: null } };
+      return { ...state, productSearch: { ...state.productSearch, query: "", loading: false, phase: "names", nameSuggestions: [], sellers: [], suggestedProduct: null, failed: false } };
     case "AREA_LABEL_UPDATED":
       return { ...state, currentAreaLabel: action.label };
     default:
@@ -654,6 +699,9 @@ function diagnosticsFor(action: MapRuntimeAction, nextState: MapRuntimeState): v
         count: action.sellers.length,
         suggested: Boolean(action.suggestedProduct),
       });
+      return;
+    case "PRODUCT_SEARCH_FAILED":
+      Diagnostics.track("map.product_search_failed", { query: action.query });
       return;
     case "CATEGORIES_LOADED":
       Diagnostics.track("map.categories_loaded", { categoryCount: action.categories.length });
@@ -830,7 +878,7 @@ function createMapRuntime() {
     productSearchSeq += 1;
     if (productSearchTimer !== null) clearTimeout(productSearchTimer);
     const seq = productSearchSeq;
-    dispatch({ type: "PRODUCT_SEARCH_NAMES_START", query: q });
+    dispatch({ type: "PRODUCT_SEARCH_SELLERS_START", query: q });
     void sellerRepository.searchSellersByProduct(q)
       .then((result) => {
         if (seq === productSearchSeq) {
@@ -844,7 +892,7 @@ function createMapRuntime() {
       })
       .catch(() => {
         if (seq === productSearchSeq) {
-          dispatch({ type: "PRODUCT_SEARCH_SELLERS_LOADED", query: q, sellers: [], suggestedProduct: null });
+          dispatch({ type: "PRODUCT_SEARCH_FAILED", query: q });
         }
       });
   }
@@ -875,6 +923,7 @@ function createMapRuntime() {
           }
           // Прямых совпадений нет — пробуем «Возможно вы имели в виду» (>85%):
           // подсказки сразу становятся продавцами этого товара.
+          dispatch({ type: "PRODUCT_SEARCH_SELLERS_START", query: q });
           void sellerRepository.searchSellersByProduct(q)
             .then((result: ProductSearchResult) => {
               if (seq !== productSearchSeq) return;
@@ -886,11 +935,11 @@ function createMapRuntime() {
               });
             })
             .catch(() => {
-              if (seq === productSearchSeq) dispatch({ type: "PRODUCT_SEARCH_NAMES_LOADED", query: q, suggestions: [] });
+              if (seq === productSearchSeq) dispatch({ type: "PRODUCT_SEARCH_FAILED", query: q });
             });
         })
         .catch(() => {
-          if (seq === productSearchSeq) dispatch({ type: "PRODUCT_SEARCH_NAMES_LOADED", query: q, suggestions: [] });
+          if (seq === productSearchSeq) dispatch({ type: "PRODUCT_SEARCH_FAILED", query: q });
         });
     }, SEARCH_SUGGESTIONS_DEBOUNCE_MS);
   }
