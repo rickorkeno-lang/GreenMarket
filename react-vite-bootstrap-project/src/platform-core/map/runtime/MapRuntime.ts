@@ -11,6 +11,8 @@ import type { CategoryOption } from "@/platform-core/map/repository/SellerReposi
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
 import { GeoService } from "@/platform-core/map/gis/GeoService";
 import { MockSellerRepository } from "@/platform-core/map/repository/MockSellerRepository";
+import { MapSessionStore } from "@/platform-core/map/persistence/MapSessionStore";
+import type { MapSessionSnapshot } from "@/platform-core/map/persistence/MapSessionStore";
 import { Diagnostics } from "@/platform-core/diagnostics/Diagnostics";
 import {
   applySellerFilters,
@@ -46,11 +48,14 @@ import {
  * остальных (единая сущность). Новые методы/чекбоксы добавляются в
  * buildSellerFilters без изменения reducer'а и UI.
  *
- * Singleton на уровне модуля — переживает unmount/remount MapScreenView
- * (уход на Catalog/SellerCard и возврат), что и даёт "восстановление
- * состояния карты после возврата на экран" (§10/§12) без отдельного
- * MapSessionStore: теперь один источник, а не два синхronизируемых.
- * ========================================================================== */
+ *  Singleton на уровне модуля — переживает unmount/remount MapScreenView
+ *  (уход на Catalog/SellerCard и возврат), что и даёт "восстановление
+ *  состояния карты после возврата на экран" (§10/§12): в пределах вкладки
+ *  runtime — единственный источник состояния. Между СЕАНСАМИ (перезагрузка
+ *  или закрытие страницы) состояние сохраняет MapSessionStore (localStorage):
+ *  при создании runtime применяет снапшот через withRestoredSession (см. ниже),
+ *  при закрытии — экран вызывает toSessionSnapshot.
+ *  ========================================================================== */
 
 /** Радиус поиска продавцов по умолчанию (метры) — стартовое значение мастера
  *  «Поиск продавцов» (MAP-053/MAP-018); пользователь может его изменить. */
@@ -163,6 +168,53 @@ export type MapRuntimeAction =
    * пересчитывается локально из loadedSellers — Repository не дёргается. */
   | { type: "SET_FILTER_OPTIONS"; groupId: string; optionIds: string[] };
 
+/** Тексты полей ввода, которыми MapScreenView дополняет доменный снапшот при
+ *  сохранении сеанса (MapRuntime#toSessionSnapshot). По конвенции экрана
+ *  («локальное состояние — только поля ввода пользователя») эти строки живут
+ *  в React-состоянии, а не в runtime, поэтому runtime не может их знать сам. */
+export interface MapSessionInput {
+  searchQuery: string;
+  searchRadiusKm: string;
+}
+
+/** Восстановление сохранённого между сеансами состояния карты (MapSessionStore):
+ *  позиция, фильтр, мастер «Поиск продавцов» (точка, подпись, радиус) и
+ *  открытая панель Bottom Sheet. Для sellerSummary снапшот карточки кладётся
+ *  в state.searchResult — продавца из результата поиска может не быть в
+ *  видимой области, но карточка обязана открыться (данные карточки ищутся
+ *  там же — см. findSellerData / MapSheetAdapter).
+ *
+ *  initialState НЕ трогается: reducer-сбросы (UNSELECT_SELLER, SELLER_SEARCH_OPEN,
+ *  SEARCH_SUGGESTIONS_CLEARED) ссылаются на него. Снапшот применяется к копии
+ *  initialState в момент создания runtime. В окружениях без localStorage
+ *  (Node/тесты) load() возвращает null — состояние остаётся базовым. */
+function withRestoredSession(base: MapRuntimeState): MapRuntimeState {
+  const session = MapSessionStore.load();
+  if (!session) return base;
+  const sheet = session.bottomSheet;
+  let selectedSellerId: SellerId | null = null;
+  let searchResult: SellerMapRecord[] | null = null;
+  if (sheet?.type === "sellerSummary") {
+    selectedSellerId = sheet.sellerId;
+    searchResult = sheet.seller ? [sheet.seller] : null;
+  }
+  return {
+    ...base,
+    mapCenter: session.viewport.center,
+    zoom: session.viewport.zoom,
+    selectedFilters: session.selectedFilters,
+    bottomSheet: sheet ? sheet.type : base.bottomSheet,
+    selectedSellerId,
+    searchResult,
+    sellerSearch: {
+      ...base.sellerSearch,
+      origin: session.sellerSearch.origin,
+      originLabel: session.sellerSearch.originLabel,
+      radiusMeters: session.sellerSearch.radiusMeters,
+    },
+  };
+}
+
 const initialState: MapRuntimeState = {
   visibleSellers: [],
   loadedSellers: [],
@@ -192,14 +244,30 @@ const initialState: MapRuntimeState = {
   currentAreaLabel: null,
 };
 
-/** Выбранный продавец, отфильтрованный из видимого списка, снимается (и
- *  закрывается Bottom Sheet), чтобы не висела пустая карточка. */
+/** Поиск данных продавца по всем источникам карточки Bottom Sheet: видимая
+ *  область, результаты мастера «Поиск продавцов» и результат поиска по имени
+ *  (searchResult, куда ложится и снапшот карточки из сохранённого сеанса).
+ *  Один источник правды для «продавец доступен для карточки» — используется и
+ *  в withVisibleSellers (решение «не снимать выбор»), и в MapSheetAdapter. */
+function findSellerData(state: MapRuntimeState, sellerId: SellerId): SellerMapRecord | null {
+  return (
+    state.visibleSellers.find((s) => s.sellerId === sellerId) ??
+    state.sellerSearch.results.find((s) => s.sellerId === sellerId) ??
+    state.searchResult?.find((s) => s.sellerId === sellerId) ??
+    null
+  );
+}
+
+/** Выбранный продавец, чьи данные больше нигде не находятся (отфильтрован из
+ *  видимого списка, выпал из результатов поиска и не лежит в searchResult),
+ *  снимается — и закрывается Bottom Sheet, чтобы не висела пустая карточка.
+ *  Данные карточки из searchResult (в т.ч. восстановленной из сеанса) выбор
+ *  сохраняют: карточка обязана открыться даже вне видимой области. */
 function withVisibleSellers(state: MapRuntimeState, visibleSellers: SellerMapRecord[]): MapRuntimeState {
-  const selectedStillVisible =
-    state.selectedSellerId !== null && visibleSellers.some((s) => s.sellerId === state.selectedSellerId);
+  const next = { ...state, visibleSellers };
+  const selectedStillVisible = state.selectedSellerId !== null && findSellerData(next, state.selectedSellerId) !== null;
   return {
-    ...state,
-    visibleSellers,
+    ...next,
     selectedSellerId: selectedStillVisible ? state.selectedSellerId : null,
     bottomSheet: selectedStillVisible ? state.bottomSheet : "hidden",
   };
@@ -321,7 +389,14 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
     case "SELLER_SEARCH_OPEN":
       // Открытие мастера: сбрасываем старый мастер и выбор продавца, показываем
       // шаг выбора точки (список «Моё местоположение» / «Положение на карте»).
-      return { ...state, selectedSellerId: null, bottomSheet: "sellerSearchOrigin", sellerSearch: initialState.sellerSearch };
+      // Радиус сохраняется (его вводил пользователь, в т.ч. в прошлом сеансе),
+      // точка и результаты сбрасываются.
+      return {
+        ...state,
+        selectedSellerId: null,
+        bottomSheet: "sellerSearchOrigin",
+        sellerSearch: { ...initialState.sellerSearch, radiusMeters: state.sellerSearch.radiusMeters },
+      };
     case "SELLER_SEARCH_ORIGIN_PICKED":
       // Точка выбрана: мастер переходит к шагу результатов. Радиус/введённые
       // значения сохраняются, старые результаты (для другой точки) очищаются —
@@ -443,7 +518,10 @@ function diagnosticsFor(action: MapRuntimeAction, nextState: MapRuntimeState): v
 }
 
 function createMapRuntime() {
-  let state = initialState;
+  // Применение сохранённого между сеансами состояния (MapSessionStore): карта
+  // открывается там, где её оставили (позиция/масштаб), с прежними фильтром,
+  // мастером поиска и открытой панелью — без перелёта камеры при старте.
+  let state = withRestoredSession(initialState);
   const listeners = new Set<() => void>();
 
   function dispatch(action: MapRuntimeAction): void {
@@ -592,6 +670,39 @@ function createMapRuntime() {
     });
   }
 
+  /** Экспорт текущего состояния в снапшот сеанса (MapSessionStore). Домен
+   *  runtime (viewport, фильтр, мастер поиска, открытая панель + данные
+   *  карточки) собирается здесь — единственный источник правды; тексты полей
+   *  ввода экран передаёт из своих локальных state. Вызывается и при закрытии
+   *  страницы/ухода с экрана, и троттлится в подписке на изменения. */
+  function toSessionSnapshot(input: MapSessionInput): MapSessionSnapshot {
+    const s = state;
+    let bottomSheet: MapSessionSnapshot["bottomSheet"] = null;
+    if (s.bottomSheet === "sellerSummary" && s.selectedSellerId !== null) {
+      bottomSheet = {
+        type: "sellerSummary",
+        sellerId: s.selectedSellerId,
+        seller: findSellerData(s, s.selectedSellerId),
+      };
+    } else if (s.bottomSheet === "sellerSearchOrigin") {
+      bottomSheet = { type: "sellerSearchOrigin" };
+    } else if (s.bottomSheet === "sellerSearchResults") {
+      bottomSheet = { type: "sellerSearchResults" };
+    }
+    return {
+      viewport: { center: s.mapCenter, zoom: s.zoom },
+      selectedFilters: s.selectedFilters,
+      searchQuery: input.searchQuery,
+      searchRadiusKm: input.searchRadiusKm,
+      sellerSearch: {
+        origin: s.sellerSearch.origin,
+        originLabel: s.sellerSearch.originLabel,
+        radiusMeters: s.sellerSearch.radiusMeters,
+      },
+      bottomSheet,
+    };
+  }
+
   return {
     getState: (): MapRuntimeState => state,
     dispatch,
@@ -609,6 +720,7 @@ function createMapRuntime() {
     requestSearchSuggestions,
     clearSearchSuggestions,
     loadCategories,
+    toSessionSnapshot,
   };
 }
 

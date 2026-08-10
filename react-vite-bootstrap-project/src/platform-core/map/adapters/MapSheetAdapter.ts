@@ -145,12 +145,15 @@ export const MapSheetAdapter = {
       return searchResultsBlocks(vm.sellerSearch);
     }
     // Карточка выбранного продавца — тоже до проверки пустой области: продавца
-    // из результатов поиска может не быть в видимой области (точка поиска
-    // далеко), но карточка обязана открыться.
+    // из результатов поиска (или восстановленного сеанса, searchResult) может
+    // не быть в видимой области (точка поиска далеко), но карточка обязана
+    // открыться. Источники данных — те же, что у withVisibleSellers в runtime
+    // (findSellerData): видимая область, результаты мастера, поиск по имени.
     if (vm.bottomSheet === "sellerSummary" && vm.selectedSellerId) {
       const seller =
         vm.sellers.find((s) => s.sellerId === vm.selectedSellerId) ??
         vm.sellerSearch.results.find((s) => s.sellerId === vm.selectedSellerId) ??
+        vm.searchResult?.find((s) => s.sellerId === vm.selectedSellerId) ??
         null;
       if (seller) return sellerSummaryBlocks(seller);
     }

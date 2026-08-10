@@ -15,6 +15,17 @@ import "leaflet/dist/leaflet.css";
  *  (дефолты dragging/doubleClickZoom = true) и explicit-конфигурируются
  *  через MapConfig, а не магическими значениями в компоненте. */
 
+/** Дополнительное усиление ореола на крупных масштабах (GM-UX-001): на
+ *  zoom 16–19 свечение растёт быстрее базовой формулы (множитель 1 на всех
+ *  остальных масштабах — без изменений). Чем ближе к предельному zoom 19
+ *  (максимум тайлов OSM), тем заметнее ореол, чтобы точки не терялись. */
+const GLOW_BOOST_BY_ZOOM: Record<number, number> = {
+  16: 1.25,
+  17: 1.5,
+  18: 1.75,
+  19: 2,
+};
+
 function sellerDivIcon(selected: boolean, available: boolean, sellerId: string, zoom: number): L.DivIcon {
   // Доступные продавцы — светло-зелёные со свечением, чтобы выделяться на фоне
   // посторонних заведений карты (GM-UX-001). Цвет ореола взят из токена через
@@ -24,7 +35,12 @@ function sellerDivIcon(selected: boolean, available: boolean, sellerId: string, 
   // тем крупнее ореол; на отдалении он почти исчезает, чтобы разрозненные
   // точки не сливались в одно пятно. База: кольцо 4px / размытие 16px на
   // дефолтном zoom 13, масштаб от 0.3 до 4.
-  const scale = Math.max(0.3, Math.min(4, 1 + (zoom - 13) * 0.6));
+  //
+  // Множитель GLOW_BOOST_BY_ZOOM применяется ПОСЛЕ базового зажима scale
+  // (и без него не больше 4): «в 2 раза больше, чем сейчас» на zoom 19 —
+  // буквально 2 × текущее значение, а не 2 × сырую формулу без зажима.
+  const boost = GLOW_BOOST_BY_ZOOM[zoom] ?? 1;
+  const scale = Math.max(0.3, Math.min(4, 1 + (zoom - 13) * 0.6)) * boost;
   const ring = Math.round(4 * scale);
   const blur = Math.round(16 * scale);
   const spread = Math.round(4 * scale);

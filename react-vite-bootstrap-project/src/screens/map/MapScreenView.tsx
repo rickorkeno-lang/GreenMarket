@@ -9,6 +9,11 @@ import { MapAdapter } from '@/platform-core/map/gis/MapAdapter';
 import type { CameraChangeReason } from '@/platform-core/map/gis/MapAdapterTypes';
 import { MapBuilder } from '@/platform-core/map/builders/MapBuilder';
 import { DEFAULT_SELLER_SEARCH_RADIUS_METERS, MapRuntime } from '@/platform-core/map/runtime/MapRuntime';
+import {
+  SELLER_SEARCH_RADIUS_MAX_METERS,
+  SELLER_SEARCH_RADIUS_MIN_METERS,
+} from '@/platform-core/map/repository/SellerRepository';
+import { MapSessionStore } from '@/platform-core/map/persistence/MapSessionStore';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
 import type { CameraParams, GeoPoint, MapBounds, MapViewModel, SellerMapRecord } from '@/platform-core/map/viewmodels/MapViewModel';
 import { MapBottomSheetContent } from '@/screens/map/MapBottomSheetContent';
@@ -21,13 +26,19 @@ const ZOOM_ON_SELLER = 15;
 
 /** «Км → метры» для поля радиуса: запятая считается десятичной точкой;
  *  пустое/нечисловое/неположительное значение возвращает null (поиск не
- *  запускается, предыдущие результаты остаются). */
+ *  запускается, предыдущие результаты остаются). Результат зажимается в
+ *  SELLER_SEARCH_RADIUS_MIN_METERS..MAX_METERS: диапазон настолько широкий
+ *  (100 м … 20 000 км), что пользователь не может упереться в лимит — верхняя
+ *  граница покрывает любую точку планеты. */
 function parseRadiusKmToMeters(value: string): number | null {
   const normalized = value.trim().replace(',', '.');
   if (!normalized) return null;
   const km = Number(normalized);
   if (!Number.isFinite(km) || km <= 0) return null;
-  return Math.round(km * 1000);
+  const meters = km * 1000;
+  return Math.round(
+    Math.min(SELLER_SEARCH_RADIUS_MAX_METERS, Math.max(SELLER_SEARCH_RADIUS_MIN_METERS, meters)),
+  );
 }
 
 /**
@@ -56,10 +67,27 @@ export function MapScreenView() {
   const mapState = useSyncExternalStore(MapRuntime.subscribe, MapRuntime.getState);
 
   const [centerRequestToken, setCenterRequestToken] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
+  // Тексты полей ввода инициализируются из сохранённого сеанса (MapSessionStore
+  // кеширует чтение localStorage на сеанс — дешёво), чтобы при возврате на
+  // страницу строка поиска и радиус мастера выглядели как при уходе, без
+  // мерцания «пусто → заполнено».
+  const [searchQuery, setSearchQuery] = useState(() => MapSessionStore.load()?.searchQuery ?? '');
   const [locationNotice, setLocationNotice] = useState<'unavailable' | 'no-permission' | null>(null);
   const locationNoticeTimerRef = useRef<number | null>(null);
-  const [searchRadiusKm, setSearchRadiusKm] = useState('5');
+  const [searchRadiusKm, setSearchRadiusKm] = useState(() => {
+    const session = MapSessionStore.load();
+    if (session?.searchRadiusKm) return session.searchRadiusKm;
+    return String((session?.sellerSearch.radiusMeters ?? DEFAULT_SELLER_SEARCH_RADIUS_METERS) / 1000);
+  });
+  // Зеркала полей ввода для persistSession (см. ниже): слушатели закрытия
+  // страницы зарегистрированы один раз, а свежие значения читаются через refs,
+  // а не через замыкание — иначе сохранялся бы текст первого рендера.
+  const searchQueryRef = useRef(searchQuery);
+  const searchRadiusKmRef = useRef(searchRadiusKm);
+  // Защита от повторного нажатия геолокации (замечание №44): пока предыдущий
+  // вызов navigator.geolocation в полёте, повторные нажатия «Моё местоположение»
+  // игнорируются — иначе множественные разрешения и дублирующие события.
+  const geolocationPendingRef = useRef(false);
 
   /** Показывает snackbar об ошибке геолокации (MAP-005 §4) и автоматически
    *  скрывает его через несколько секунд. Повторное нажатие кнопки
@@ -77,12 +105,18 @@ export function MapScreenView() {
    *  snackbar. Возвращает координаты либо null (пользователь уже получил
    *  snackbar, положение карты не меняется). */
   const resolveLocationOrNotify = useCallback(async (): Promise<GeoPoint | null> => {
-    const resolution = await GeoService.resolveUserLocation();
-    if (resolution.status !== 'ok') {
-      showLocationNotice(resolution.status === 'no-permission' ? 'no-permission' : 'unavailable');
-      return null;
+    if (geolocationPendingRef.current) return null;
+    geolocationPendingRef.current = true;
+    try {
+      const resolution = await GeoService.resolveUserLocation();
+      if (resolution.status !== 'ok') {
+        showLocationNotice(resolution.status === 'no-permission' ? 'no-permission' : 'unavailable');
+        return null;
+      }
+      return resolution.location;
+    } finally {
+      geolocationPendingRef.current = false;
     }
-    return resolution.location;
   }, [showLocationNotice]);
 
   useEffect(() => {
@@ -107,6 +141,70 @@ export function MapScreenView() {
     },
     [],
   );
+
+  // ===== Сохранение/восстановление сеанса (MapSessionStore, localStorage) =====
+  // Сохраняется ВСЁ состояние карты (NFR-002/NFR-003, ТЗ-005 §6): позиция и
+  // масштаб, фильтр, тексты полей ввода, мастер «Поиск продавцов» и открытая
+  // панель Bottom Sheet вместе с данными её карточки. Восстановление делает
+  // MapRuntime при создании (withRestoredSession — позиция/фильтр/мастер/
+  // панель) + инициализация полей ввода выше; здесь — только каналы записи и
+  // перезапрос данных, которые намеренно не храним (см. ниже).
+
+  // persistSession читает свежие значения через refs, поэтому его безопасно
+  // вызывать из слушателей, зарегистрированных один раз.
+  const persistSession = useCallback(() => {
+    MapSessionStore.save(
+      MapRuntime.toSessionSnapshot({
+        searchQuery: searchQueryRef.current,
+        searchRadiusKm: searchRadiusKmRef.current,
+      }),
+    );
+  }, []);
+
+  // ОСНОВНОЕ сохранение — в момент закрытия страницы/вкладки (pagehide
+  // срабатывает даже при bfcache-навигации, beforeunload — страховка) и ухода
+  // с экрана (SPA-переход, при котором pagehide не наступает, а вкладка потом
+  // может быть закрыта). Загрузка сохранённой позиции происходит НЕ здесь: её
+  // делает MapRuntime в начальном состоянии, чтобы карта сразу открывалась
+  // там, где её оставили, без перелёта камеры.
+  useEffect(() => {
+    const persist = () => persistSession();
+    window.addEventListener('pagehide', persist);
+    window.addEventListener('beforeunload', persist);
+    return () => {
+      window.removeEventListener('pagehide', persist);
+      window.removeEventListener('beforeunload', persist);
+      persist();
+    };
+  }, [persistSession]);
+
+  // Редкий fallback во время сеанса (защита от краша вкладки, когда закрытие
+  // не наступает): любое изменение состояния runtime сохраняет снапшот не
+  // чаще раза в THROTTLE_SAVE_INTERVAL_MS — не дёргая localStorage на каждый
+  // moveend/SELLERS_LOADED.
+  useEffect(
+    () =>
+      MapRuntime.subscribe(() => {
+        MapSessionStore.saveThrottled(
+          MapRuntime.toSessionSnapshot({
+            searchQuery: searchQueryRef.current,
+            searchRadiusKm: searchRadiusKmRef.current,
+          }),
+        );
+      }),
+    [],
+  );
+
+  // Результаты мастера «Поиск продавцов» и видимую область намеренно не
+  // храним (сырые данные устаревают): при восстановлении открытого шага
+  // результатов перезапрашиваем их заново; видимая область грузится штатно из
+  // onVisibleBoundsChange карты.
+  useEffect(() => {
+    const session = MapSessionStore.load();
+    if (session?.bottomSheet?.type === 'sellerSearchResults' && session.sellerSearch.origin) {
+      MapRuntime.requestSellerSearch();
+    }
+  }, []);
 
   const handleVisibleBoundsChange = useCallback((bounds: MapBounds) => {
     // §5/§13 (дедупликация почти не изменившихся границ) и MAP-011 (debounce)
@@ -160,7 +258,12 @@ export function MapScreenView() {
    *  расстоянию. Состояние шага/точки/радиуса/результатов живёт в MapRuntime
    *  (reducer-кейсы SELLER_SEARCH_*), поиск запускается MapRuntime#requestSellerSearch. */
   const handleOpenSellerSearch = useCallback(() => {
-    setSearchRadiusKm(String(DEFAULT_SELLER_SEARCH_RADIUS_METERS / 1000));
+    // Поле радиуса показывает последний использованный радиус (в т.ч.
+    // восстановленный из сеанса), а не сбрасывается к дефолту: reducer
+    // SELLER_SEARCH_OPEN радиус сохраняет.
+    const radiusKm = String(MapRuntime.getState().sellerSearch.radiusMeters / 1000);
+    setSearchRadiusKm(radiusKm);
+    searchRadiusKmRef.current = radiusKm;
     MapRuntime.dispatch({ type: 'SELLER_SEARCH_OPEN' });
   }, []);
 
@@ -194,6 +297,7 @@ export function MapScreenView() {
    *  не дёргаем. */
   const handleSearchRadiusInput = useCallback((value: string) => {
     setSearchRadiusKm(value);
+    searchRadiusKmRef.current = value;
     const radiusMeters = parseRadiusKmToMeters(value);
     if (!radiusMeters) return;
     MapRuntime.scheduleSellerSearch(radiusMeters);
@@ -283,6 +387,7 @@ export function MapScreenView() {
    *  подсказок в MapRuntime (с дебаунсом и защитой от гонок, MAP-019). */
   const handleSearchQueryChange = useCallback((value: string) => {
     setSearchQuery(value);
+    searchQueryRef.current = value;
     MapRuntime.requestSearchSuggestions(value);
   }, []);
 
@@ -292,6 +397,7 @@ export function MapScreenView() {
   const handleSearchSuggestionSelect = useCallback(
     (seller: SellerMapRecord) => {
       setSearchQuery(seller.name);
+      searchQueryRef.current = seller.name;
       MapRuntime.clearSearchSuggestions();
       MapRuntime.dispatch({ type: 'MOVE_MAP', center: seller.location, zoom: ZOOM_ON_SELLER });
       MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: seller.sellerId });
@@ -310,6 +416,7 @@ export function MapScreenView() {
     () => ({
       state: mapState.error ? 'error' : mapState.loading ? 'loading' : mapState.visibleSellers.length === 0 ? 'empty' : 'success',
       sellers: mapState.visibleSellers,
+      searchResult: mapState.searchResult,
       selectedSellerId: mapState.selectedSellerId,
       userLocation: mapState.userLocation,
       camera,

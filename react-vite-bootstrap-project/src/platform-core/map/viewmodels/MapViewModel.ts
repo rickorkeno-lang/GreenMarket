@@ -93,6 +93,11 @@ export type BottomSheetState = "hidden" | "sellerSummary" | "sellerSearchOrigin"
 export interface MapViewModel {
   state: ViewState;
   sellers: SellerMapRecord[];
+  /** Результат поиска продавца по имени (MAP-053) и — при восстановлении
+   *  сеанса — снапшот карточки открытого продавца. Источник данных карточки,
+   *  когда продавец вне видимой области (см. MapSheetAdapter). null — поиска
+   *  не было. */
+  searchResult: SellerMapRecord[] | null;
   selectedSellerId: SellerId | null;
   userLocation: GeoPoint | null;
   camera: CameraParams;

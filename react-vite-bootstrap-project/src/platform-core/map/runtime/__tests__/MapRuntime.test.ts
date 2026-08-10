@@ -461,6 +461,49 @@ async function run() {
     "существующая категория сохраняется после перезагрузки",
   );
 
+  // ---- Экспорт снапшота сеанса (toSessionSnapshot, MapSessionStore) ----
+
+  // Мастер «Поиск продавцов» на шаге результатов: точка, подпись, радиус.
+  MapRuntime.dispatch({ type: "MOVE_MAP", center: { lat: 50.2, lng: 8.7 }, zoom: 14 });
+  MapRuntime.dispatch({ type: "SELLER_SEARCH_OPEN" });
+  MapRuntime.dispatch({
+    type: "SELLER_SEARCH_ORIGIN_PICKED",
+    origin: { lat: 50.2, lng: 8.7 },
+    label: "Моё местоположение",
+  });
+  MapRuntime.dispatch({ type: "SELLER_SEARCH_RADIUS_CHANGED", radiusMeters: 3000 });
+  let snapshot = MapRuntime.toSessionSnapshot({ searchQuery: "мед", searchRadiusKm: "3" });
+  assert.deepEqual(snapshot.viewport, { center: { lat: 50.2, lng: 8.7 }, zoom: 14 }, "снапшот сохраняет позицию и масштаб");
+  assert.equal(snapshot.searchQuery, "мед", "снапшот сохраняет текст строки поиска");
+  assert.equal(snapshot.searchRadiusKm, "3", "снапшот сохраняет текст поля радиуса");
+  assert.deepEqual(
+    snapshot.sellerSearch,
+    { origin: { lat: 50.2, lng: 8.7 }, originLabel: "Моё местоположение", radiusMeters: 3000 },
+    "снапшот сохраняет точку, подпись и радиус мастера",
+  );
+  assert.deepEqual(snapshot.bottomSheet, { type: "sellerSearchResults" }, "снапшот сохраняет открытую панель");
+
+  // Открытая карточка продавца: в снапшот попадает id и данные карточки
+  // (продавец ищется в видимой области/результатах/searchResult — findSellerData).
+  const firstVisible = MapRuntime.getState().visibleSellers[0];
+  assert.ok(firstVisible, "для теста снапшота нужен видимый продавец");
+  MapRuntime.dispatch({ type: "SELECT_SELLER", sellerId: firstVisible.sellerId });
+  snapshot = MapRuntime.toSessionSnapshot({ searchQuery: "", searchRadiusKm: "5" });
+  assert.equal(snapshot.bottomSheet?.type, "sellerSummary", "снапшот сохраняет открытую карточку");
+  if (snapshot.bottomSheet?.type === "sellerSummary") {
+    assert.equal(snapshot.bottomSheet.sellerId, firstVisible.sellerId, "снапшот сохраняет id выбранного продавца");
+    assert.equal(
+      snapshot.bottomSheet.seller?.sellerId,
+      firstVisible.sellerId,
+      "снапшот карточки содержит данные продавца",
+    );
+  }
+
+  // Закрытая панель — bottomSheet = null.
+  MapRuntime.dispatch({ type: "UNSELECT_SELLER" });
+  snapshot = MapRuntime.toSessionSnapshot({ searchQuery: "", searchRadiusKm: "5" });
+  assert.equal(snapshot.bottomSheet, null, "закрытая панель → null в снапшоте");
+
   console.log("MapRuntime: все проверки пройдены");
 }
 

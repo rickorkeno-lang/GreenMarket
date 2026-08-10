@@ -39,6 +39,7 @@ function viewModel(overrides: Partial<MapViewModel>): MapViewModel {
   return {
     state: "success",
     sellers: [],
+    searchResult: null,
     selectedSellerId: null,
     userLocation: null,
     camera: { center: { lat: 50.11, lng: 8.68 }, zoom: 13 },
@@ -154,6 +155,22 @@ async function run() {
     cardFromSearch.find((b) => b.type === "sectionLabel")?.text,
     "Продавец 7",
     "карточка построена из продавца результатов поиска даже при пустой области"
+  );
+
+  // Карточка продавца, восстановленная из сохранённого сеанса: продавец лежит
+  // в searchResult (снапшот сеанса), его нет ни в видимой области, ни в
+  // результатах мастера — карточка обязана открыться из searchResult.
+  const cardFromSession = MapSheetAdapter.toBlocks(
+    viewModel({
+      bottomSheet: "sellerSummary",
+      selectedSellerId: asSellerId("seller-9"),
+      searchResult: [seller(9)],
+    }),
+  );
+  assert.equal(
+    cardFromSession.find((b) => b.type === "sectionLabel")?.text,
+    "Продавец 9",
+    "карточка построена из снапшота сеанса (searchResult) при пустой области"
   );
 
   console.log("MapSheetAdapter: все проверки пройдены");

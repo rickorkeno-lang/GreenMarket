@@ -18,6 +18,7 @@ import { MockSellerRepository } from '@/platform-core/map/repository/MockSellerR
 import { MapRuntime } from '@/platform-core/map/runtime/MapRuntime';
 import { applySellerFilters, buildSellerFilters } from '@/platform-core/map/filters/SellerFilters';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
+import { InitialsFormatter } from '@/platform-core/formatting/InitialsFormatter';
 import { RatingFormatter } from '@/platform-core/formatting/RatingFormatter';
 import { DistanceFormatter } from '@/platform-core/formatting/DistanceFormatter';
 import { SellerFilter } from '@/screens/filter/SellerFilter';
@@ -51,16 +52,6 @@ type SellerListLoadState = 'loading' | 'error' | 'ready';
 
 const ZOOM_ON_SELLER = 15;
 const SEARCH_DEBOUNCE_MS = 350;
-
-function initialsOf(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join('')
-    .toUpperCase();
-}
 
 /** Порядок показа продавцов в списке: сначала открытые, затем пока ещё не
  *  открытые (но доступные), затем недоступные. Сортировка стабильная —
@@ -222,6 +213,9 @@ export function SellerListScreenView() {
                 <Text variant="caption" tone="secondary" data-testid="seller-list-count">
                   {visibleSellers.length} продавцов
                 </Text>
+                <Text variant="caption" tone="secondary" as="div" data-testid="seller-list-hint">
+                  все продавцы, не только видимые на карте
+                </Text>
               </span>
             )}
           </Row>
@@ -270,7 +264,7 @@ export function SellerListScreenView() {
             {visibleSellers.map((seller) => (
               <ListItem
                 key={seller.sellerId}
-                leading={<Avatar initials={initialsOf(seller.name)} alt={`${seller.name}: аватар`} />}
+                leading={<Avatar initials={InitialsFormatter.format(seller.name)} alt={`${seller.name}: аватар`} />}
                 onClick={() => handleSelectSeller(seller)}
                 data-testid={`seller-list-row-${seller.sellerId}`}
                 trailing={
