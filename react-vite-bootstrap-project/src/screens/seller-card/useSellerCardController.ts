@@ -4,6 +4,7 @@ import { useGreenMarketRuntime } from '@/platform-core/navigation-runtime-layer/
 import { isAtRoot } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
 import { asSellerId } from '@/platform-core/contracts/Action';
 import { sellerRepository } from '@/platform-core/map/repository/repository';
+import { MapRuntime } from '@/platform-core/map/runtime/MapRuntime';
 import type { SellerProductRecord } from '@/platform-core/map/repository/SellerRepository';
 import type { RecommendedSeller } from '@/platform-core/map/recommendations/SellerRecommendations';
 import type { SellerCardViewModel } from '@/platform-core/viewmodels/SellerCardViewModel';
@@ -146,11 +147,20 @@ export function useSellerCardController(): SellerCardPageModel {
     setIsFavorite((value) => !value);
   }, [dispatch, sellerId]);
 
+  /** «Маршрут» (MAP-020): строит маршрут до продавца в MapRuntime и сразу
+   *  отправляет пользователя на карту. Если страница продавца была открыта
+   *  с карты (под ней в стеке лежит Map) — возвращаемся на неё (BACK); иначе
+   *  карта открывается поверх (OPEN_MAP). Маршрут не привязан к выбору
+   *  продавца, поэтому данные передаются явно (record), даже если продавца
+   *  нет в видимой области карты. */
   const handleStartRoute = useCallback(() => {
-    if (!sellerId) return;
+    if (!sellerId || !record) return;
     Diagnostics.track('seller_card.start_route', { sellerId });
-    dispatch({ type: 'START_ROUTE' });
-  }, [dispatch, sellerId]);
+    MapRuntime.requestRoute(sellerId, record);
+    const stack = state.navigation.stack;
+    const previous = stack.length > 1 ? stack[stack.length - 2] : null;
+    dispatch(previous?.screen === 'Map' ? { type: 'BACK' } : { type: 'OPEN_MAP' });
+  }, [dispatch, sellerId, record, state.navigation.stack]);
 
   const handleOpenRecommendation = useCallback(
     (recommendation: RecommendedSeller) => {

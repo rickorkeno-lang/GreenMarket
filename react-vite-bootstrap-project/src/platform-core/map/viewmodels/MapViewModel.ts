@@ -99,6 +99,32 @@ export type BottomSheetState =
   | "sellerSearchResults"
   | "sellerHistory";
 
+/** Маршрут до продавца (MAP-020) — декодированная геометрия маршрута (ломаная
+ *  в WGS84, порядок точек — от точки пользователя к продавцу) и его метрики.
+ *  Это всё, что знают потребители маршрута: карта (LeafletAdapter рисует
+ *  полилинию) и Bottom Sheet (расстояние/время). Отрисовка/форматирование —
+ *  дело адаптеров, сама модель движко-независима. */
+export interface RouteModel {
+  geometry: GeoPoint[];
+  distanceMeters: number;
+  durationSeconds: number;
+}
+
+/** Причина, почему маршрут не построен (route.status = "error"):
+ *  "no-route" — провайдер маршрутов не нашёл путь (между точками нет дорог);
+ *  "network" — провайдер/сеть недоступны (запрос упал, таймаут, нет соединения).
+ *  Bottom Sheet показывает разный текст и разную кнопку повторной попытки. */
+export type RouteFailureKind = "no-route" | "network";
+
+/** Состояние маршрута до выбранного продавца (MAP-020). idle — маршрут не
+ *  запрашивался (или пользователь его убрал); loading — строится; success —
+ *  построен (модель); error — не построен с причиной (см. RouteFailureKind). */
+export type RouteState =
+  | { status: "idle" }
+  | { status: "loading"; sellerId: SellerId }
+  | { status: "success"; sellerId: SellerId; route: RouteModel }
+  | { status: "error"; sellerId: SellerId; kind: RouteFailureKind };
+
 /** Состояние поиска по товарам (режим строки поиска). Пользователь может
  *  переключать строку поиска между «по названию продавца» и «по товару»
  *  (кнопка-переключатель под полем при пустом тексте).
@@ -153,5 +179,9 @@ export interface MapViewModel {
    *  Показывается в панели bottomSheet = "sellerHistory"; пустой список —
    *  кнопка истории на карте скрыта (см. MapScreenView). */
   sellerHistory: SellerHistoryEntry[];
+  /** Маршрут до выбранного продавца (MAP-020). Актуален при bottomSheet =
+   *  "sellerSummary"; LeafletAdapter рисует полилинию, карточка показывает
+   *  расстояние/время и кнопки «Маршрут»/«Убрать маршрут». */
+  route: RouteState;
   currentAreaLabel: string | null;
 }

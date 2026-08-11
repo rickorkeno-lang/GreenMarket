@@ -4,6 +4,9 @@ import type {
   GeoPoint,
   MapBounds,
   ProductSearchState,
+  RouteFailureKind,
+  RouteModel,
+  RouteState,
   SearchSuggestionsState,
   SellerMapRecord,
   SellerSearchState,
@@ -18,6 +21,8 @@ import type { MapSessionSnapshot } from "@/platform-core/map/persistence/MapSess
 import { SellerHistoryStore } from "@/platform-core/map/persistence/SellerHistoryStore";
 import type { SellerHistoryEntry } from "@/platform-core/map/history/SellerHistory";
 import { Diagnostics } from "@/platform-core/diagnostics/Diagnostics";
+import { createDefaultRouteService } from "@/platform-core/map/routing/RouteServiceFactory";
+import { RouteNotFoundError } from "@/platform-core/map/routing/RouteProvider";
 import {
   applySellerFilters,
   buildSellerFilters,
@@ -75,6 +80,12 @@ const AREA_LABEL_DEBOUNCE_MS = 500;
 const SELLER_SEARCH_DEBOUNCE_MS = 500;
 const SEARCH_SUGGESTIONS_DEBOUNCE_MS = 350;
 
+/** Сервис построения маршрутов (MAP-020): локальный OSRM (если задан
+ *  VITE_OSRM_SERVER_URL) пробуется первым, публичный OSRM-API — фолбэком.
+ *  Создаётся один раз на модуль, как sellerRepository: переезд на свой
+ *  сервер = только переменная окружения, без изменения кода. */
+const routeService = createDefaultRouteService();
+
 function boundsNearlyEqual(a: MapBounds, b: MapBounds): boolean {
   return (
     Math.abs(a.north - b.north) < 0.0001 &&
@@ -99,6 +110,11 @@ export interface MapRuntimeState {
   selectedFilters: SellerFiltersState;
   selectedSellerId: SellerId | null;
   bottomSheet: BottomSheetState;
+  /** Маршрут до выбранного продавца (MAP-020): состояние запроса (idle/loading/
+   *  success/error) и сам маршрут (полилиния + расстояние/время). Запрашивается
+   *  автоматически при выборе продавца и вручную кнопкой «Маршрут»; очищается
+   *  кнопкой «Убрать маршрут» и при любом сбросе выбора. */
+  route: RouteState;
   /** Мастер «Поиск продавцов» (MAP-053/MAP-018): точка поиска, радиус и
    *  результаты. Активен, когда bottomSheet = sellerSearchOrigin /
    *  sellerSearchResults. rawResults хранит сырой ответ Repository, а results
@@ -135,6 +151,11 @@ export type MapRuntimeAction =
   | { type: "MOVE_MAP"; center: GeoPoint; zoom: number }
   | { type: "ZOOM_MAP"; zoom: number }
   | { type: "CENTER_ON_USER_SUCCESS"; location: GeoPoint }
+  /* SET_USER_LOCATION — тихое определение местоположения (без движения камеры):
+   *  в отличие от CENTER_ON_USER_SUCCESS не меняет mapCenter. Нужен, чтобы
+   *  маршрут (MAP-020) строился от реальной позиции пользователя, даже если
+   *  он не нажимал «Моё местоположение». */
+  | { type: "SET_USER_LOCATION"; location: GeoPoint }
   /* §4: "повторное нажатие по выбранному продавцу" и "выбор другого
    * продавца" — оба обрабатываются одним и тем же SELECT_SELLER: reducer
    * ниже гарантирует, что в любой момент выбран не более чем один продавец,
@@ -143,6 +164,20 @@ export type MapRuntimeAction =
   | { type: "UNSELECT_SELLER" }
   | { type: "SEARCH_RESULT"; sellers: SellerMapRecord[] }
   | { type: "SEARCH_CLEARED" }
+  /* ======== Маршрут до продавца (MAP-020) ========
+   *  ROUTE_REQUEST { sellerId } — начат запрос маршрута (loading). Автоматически
+   *    диспатчится при выборе продавца (SELECT_SELLER) и кнопкой «Маршрут».
+   *  ROUTE_LOADED { sellerId, route } — маршрут построен; применяется только
+   *    если sellerId всё ещё выбран (поздний ответ устаревшего запроса не
+   *    рисуется поверх другого продавца).
+   *  ROUTE_FAILED { sellerId, kind } — маршрут не построен (no-route/network);
+   *    тот же guard по sellerId.
+   *  ROUTE_CLEARED — пользователь убрал маршрут с карты (idle).
+   *  ------------------------------------------------------------------- */
+  | { type: "ROUTE_REQUEST"; sellerId: SellerId }
+  | { type: "ROUTE_LOADED"; sellerId: SellerId; route: RouteModel }
+  | { type: "ROUTE_FAILED"; sellerId: SellerId; kind: RouteFailureKind }
+  | { type: "ROUTE_CLEARED" }
   /* ======== Action'ы мастера «Поиск продавцов» (MAP-053/MAP-018) ========
    *  SELLER_SEARCH_OPEN — открыть мастер (экран выбора точки).
    *  SELLER_SEARCH_ORIGIN_PICKED { origin, label } — выбрана точка поиска;
@@ -273,6 +308,7 @@ const initialState: MapRuntimeState = {
   selectedFilters: {},
   selectedSellerId: null,
   bottomSheet: "hidden",
+  route: { status: "idle" },
   mapCenter: defaultMapConfig.defaultCenter,
   zoom: defaultMapConfig.defaultZoom,
   userLocation: null,
@@ -333,6 +369,10 @@ function withVisibleSellers(state: MapRuntimeState, visibleSellers: SellerMapRec
     ...next,
     selectedSellerId: selectedStillVisible ? state.selectedSellerId : null,
     bottomSheet: selectedStillVisible ? state.bottomSheet : "hidden",
+    // Маршрут (MAP-020) не привязан к выбранному продавцу: он строится на
+    // странице продавца и живёт на карте, пока пользователь не уберёт его
+    // кнопкой «Убрать маршрут» (левый нижний угол) или не уйдёт с карты.
+    route: state.route,
   };
 }
 
@@ -437,23 +477,50 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
       return { ...state, zoom: action.zoom };
     case "CENTER_ON_USER_SUCCESS":
       return { ...state, userLocation: action.location, mapCenter: action.location };
+    case "SET_USER_LOCATION":
+      return { ...state, userLocation: action.location };
     case "SELECT_SELLER":
       // sellerSearch сохраняется: карточка продавца из результатов поиска
       // может подтягивать данные, даже если продавец вне видимой области.
-      return { ...state, selectedSellerId: action.sellerId, bottomSheet: "sellerSummary" };
+      // Маршрут (MAP-020) выбором не трогается: полилиния строится на странице
+      // продавца и переживает смену выбора/закрытие карточки.
+      return {
+        ...state,
+        selectedSellerId: action.sellerId,
+        bottomSheet: "sellerSummary",
+      };
     case "UNSELECT_SELLER":
       // Закрытие карточки/листа сбрасывает и мастер поиска — при повторном
-      // открытии он начинается заново с выбора точки.
-      return { ...state, selectedSellerId: null, bottomSheet: "hidden", sellerSearch: initialState.sellerSearch };
+      // открытии он начинается заново с выбора точки. Маршрут сохраняется
+      // (см. withVisibleSellers).
+      return {
+        ...state,
+        selectedSellerId: null,
+        bottomSheet: "hidden",
+        sellerSearch: initialState.sellerSearch,
+      };
     case "SEARCH_RESULT":
       return { ...state, searchResult: action.sellers };
     case "SEARCH_CLEARED":
       return { ...state, searchResult: null };
+    case "ROUTE_REQUEST":
+      // Начало запроса маршрута: показываем loading, полилиния старого маршрута
+      // (status !== success) уже не рисуется.
+      return { ...state, route: { status: "loading", sellerId: action.sellerId } };
+    case "ROUTE_LOADED":
+      // Маршрут не привязан к выбору продавца (строится на странице продавца),
+      // поэтому ответ применяется всегда; от устаревшего запроса защищает seq
+      // в requestRoute/fetchRoute (запрос старше последнего не применяется).
+      return { ...state, route: { status: "success", sellerId: action.sellerId, route: action.route } };
+    case "ROUTE_FAILED":
+      return { ...state, route: { status: "error", sellerId: action.sellerId, kind: action.kind } };
+    case "ROUTE_CLEARED":
+      return { ...state, route: { status: "idle" } };
     case "SELLER_SEARCH_OPEN":
       // Открытие мастера: сбрасываем старый мастер и выбор продавца, показываем
       // шаг выбора точки (список «Моё местоположение» / «Положение на карте»).
       // Радиус сохраняется (его вводил пользователь, в т.ч. в прошлом сеансе),
-      // точка и результаты сбрасываются.
+      // точка и результаты сбрасываются. Маршрут сохраняется (см. SELECT_SELLER).
       return {
         ...state,
         selectedSellerId: null,
@@ -500,7 +567,12 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
     case "SELLER_HISTORY_OPENED":
       // Открытие панели истории: список всегда перечитан из store (запись могла
       // появиться на странице продавца), выбор продавца сбрасывается.
-      return { ...state, selectedSellerId: null, bottomSheet: "sellerHistory", sellerHistory: action.history };
+      return {
+        ...state,
+        selectedSellerId: null,
+        bottomSheet: "sellerHistory",
+        sellerHistory: action.history,
+      };
     case "SELLER_HISTORY_UPDATED":
       return { ...state, sellerHistory: action.history };
     case "SEARCH_SUGGESTIONS_START":
@@ -660,6 +732,22 @@ function diagnosticsFor(action: MapRuntimeAction, nextState: MapRuntimeState): v
     case "SEARCH_RESULT":
       Diagnostics.track("map.search_performed", { resultCount: action.sellers.length });
       return;
+    case "ROUTE_REQUEST":
+      Diagnostics.track("map.route_requested", { sellerId: action.sellerId });
+      return;
+    case "ROUTE_LOADED":
+      Diagnostics.track("map.route_loaded", {
+        sellerId: action.sellerId,
+        distanceMeters: Math.round(action.route.distanceMeters),
+        durationSeconds: Math.round(action.route.durationSeconds),
+      });
+      return;
+    case "ROUTE_FAILED":
+      Diagnostics.track("map.route_failed", { sellerId: action.sellerId, kind: action.kind });
+      return;
+    case "ROUTE_CLEARED":
+      Diagnostics.track("map.route_cleared");
+      return;
     case "SELLER_SEARCH_OPEN":
       Diagnostics.track("map.seller_search_opened");
       return;
@@ -744,6 +832,7 @@ function createMapRuntime() {
   let searchSuggestionsSeq = 0;
   let productSearchTimer: ReturnType<typeof setTimeout> | null = null;
   let productSearchSeq = 0;
+  let routeSeq = 0;
 
   /** Фактическая загрузка продавцов (MAP-011): запрос Repository и применение
    *  ответа только если загрузка всё ещё последняя. */
@@ -952,6 +1041,76 @@ function createMapRuntime() {
     dispatch({ type: "PRODUCT_SEARCH_CLEARED" });
   }
 
+  /** Построение маршрута до продавца (MAP-020). Точка старта — текущее
+   *  местоположение пользователя. Если оно ещё не определено, оно запрашивается
+   *  тихо (без движения камеры) и маршрут строится от него; при отказе/
+   *  недоступности геолокации — дефолтный центр карты. Защита от гонок — seq,
+   *  как у остальных запросов runtime: ответ устаревшего запроса (пользователь
+   *  убрал маршрут или запустил новый) не применяется.
+   *
+   *  Маршрут НЕ привязан к выбранному продавцу: вызывается со страницы продавца
+   *  («Маршрут»), где карта может быть размонтирована, а продавца не быть в
+   *  видимой области. Поэтому sellerOverride — готовая запись SellerMapRecord
+   *  (её знает страница продавца), а findSellerData — fallback для вызова без
+   *  override. */
+  function requestRoute(sellerId?: SellerId, sellerOverride?: SellerMapRecord): void {
+    const target = sellerId ?? state.selectedSellerId;
+    if (!target) return;
+    const seller = sellerOverride ?? findSellerData(state, target);
+    if (!seller) return;
+    const seq = ++routeSeq;
+    dispatch({ type: "ROUTE_REQUEST", sellerId: target });
+
+    if (state.userLocation) {
+      fetchRoute(seq, target, seller, state.userLocation);
+      return;
+    }
+    // Геолокация ещё не запрашивалась (пользователь не нажимал «Моё
+    // местоположение»): определяем её тихо и строим маршрут от неё. Если
+    // определение упало — фолбэк на дефолтный центр (в тестовой области это
+    // разумная отправная точка). Пока геолокация в полёте, seq защищает от
+    // устаревшего ответа (пользователь уже убрал маршрут или запустил новый).
+    void GeoService.resolveUserLocation().then((resolution) => {
+      if (seq !== routeSeq) return;
+      if (resolution.status !== "ok") {
+        fetchRoute(seq, target, seller, defaultMapConfig.defaultCenter);
+        return;
+      }
+      dispatch({ type: "SET_USER_LOCATION", location: resolution.location });
+      fetchRoute(seq, target, seller, resolution.location);
+    });
+  }
+
+  /** Реальный запрос маршрута к routeService от точки origin. Вынесен, чтобы
+   *  requestRoute мог переиспользовать его после асинхронного определения
+   *  геолокации. Ответы применяются только для актуального запроса (seq). */
+  function fetchRoute(seq: number, target: SellerId, seller: SellerMapRecord, origin: GeoPoint): void {
+    void routeService
+      .getRoute(origin, seller.location)
+      .then((route) => {
+        if (seq === routeSeq) {
+          dispatch({ type: "ROUTE_LOADED", sellerId: target, route });
+        }
+      })
+      .catch((err: unknown) => {
+        if (seq === routeSeq) {
+          dispatch({
+            type: "ROUTE_FAILED",
+            sellerId: target,
+            kind: err instanceof RouteNotFoundError ? "no-route" : "network",
+          });
+        }
+      });
+  }
+
+  /** «Убрать маршрут»: снимает полилинию с карты и переводит состояние в
+   *  idle; инвалидирует незавершённый запрос (поздний ответ не вернёт маршрут
+   *  после того, как пользователь его убрал). */
+  function clearRoute(): void {
+    routeSeq += 1;
+    dispatch({ type: "ROUTE_CLEARED" });
+  }
+
   /** Поиск продавца по имени из строки поиска (MAP-053). Кладёт результат в
    *  state.searchResult и возвращает найденного продавца (null — не найден). */
   async function searchSellerByName(query: string): Promise<SellerMapRecord | null> {
@@ -1054,6 +1213,8 @@ function createMapRuntime() {
     requestProductSuggestions,
     requestProductSellers,
     clearProductSearch,
+    requestRoute,
+    clearRoute,
     loadCategories,
     requestSellerRefresh,
     openSellerHistory,

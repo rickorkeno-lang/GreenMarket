@@ -68,6 +68,10 @@ export function MapScreenView() {
   const mapState = useSyncExternalStore(MapRuntime.subscribe, MapRuntime.getState);
 
   const [centerRequestToken, setCenterRequestToken] = useState(0);
+  // Токен «показать весь маршрут» (MAP-020): инкрементируется при появлении
+  // нового построенного маршрута на карте — LeafletAdapter подгоняет камеру
+  // под всю ломаную с запасом в один зум-уровень.
+  const [fitRouteRequestToken, setFitRouteRequestToken] = useState(0);
   // Тексты полей ввода инициализируются из сохранённого сеанса (MapSessionStore
   // всегда читает localStorage напрямую — getItem дешёв; и runtime при создании,
   // и экран здесь читают одну и ту же текущую запись), чтобы при возврате на
@@ -128,6 +132,20 @@ export function MapScreenView() {
     // границами (а не приближением через радиус, IMP-003.1.2 §3).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- один раз при монтировании экрана
   }, []);
+
+  // Подгонка камеры под весь маршрут (MAP-020): при переходе route → success
+  // (включая первичное монтирование карты, когда маршрут уже построен на
+  // странице продавца) инкрементируется fitRouteRequestToken, и LeafletAdapter
+  // показывает всю ломаную с запасом в один зум-уровень. Текущий status
+  // предыдущего кадра держим в ref: dependency — ссылка на объект route
+  // (в MapRuntime стабильна между диспатчами), панирование/зум её не меняют.
+  const routeStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const status = mapState.route.status;
+    const becameSuccess = status === 'success' && routeStatusRef.current !== 'success';
+    routeStatusRef.current = status;
+    if (becameSuccess) setFitRouteRequestToken((t) => t + 1);
+  }, [mapState.route]);
 
   // Актуализация копии истории просмотра в MapRuntime: запись могла появиться
   // на странице продавца, пока карта была размонтирована, — чтобы кнопка
@@ -246,6 +264,12 @@ export function MapScreenView() {
     dispatch({ type: 'UNSELECT_SELLER' });
     MapRuntime.dispatch({ type: 'UNSELECT_SELLER' });
   }, [dispatch]);
+
+  /** «Убрать маршрут» (кнопка в левом нижнем углу карты, MAP-020): снимает
+   *  полилинию и переводит состояние маршрута в idle. */
+  const handleClearRoute = useCallback(() => {
+    MapRuntime.clearRoute();
+  }, []);
 
   const handleCenterOnUser = useCallback(async () => {
     dispatch({ type: 'CENTER_ON_USER' });
@@ -367,7 +391,9 @@ export function MapScreenView() {
   /** Действия из блоков Bottom Sheet (карточка продавца / окно с секциями
    *  «Ваша область» и «Ближайшие» / мастер «Поиск продавцов»): "Открыть
    *  продавца" из карточки, "выбрать продавца" из любой секции списка и
-   *  выбор точки поиска (геолокация или центр экрана). */
+   *  выбор точки поиска (геолокация или центр экрана). Маршрут (MAP-020)
+   *  из карточки не строится и не убирается: он создаётся на странице
+   *  продавца, а убирается кнопкой в левом нижнем углу карты. */
   const handleBlockAction = useCallback(
     (action: Action) => {
       switch (action.type) {
@@ -488,6 +514,7 @@ export function MapScreenView() {
       searchSuggestions: mapState.searchSuggestions,
       productSearch: mapState.productSearch,
       sellerHistory: mapState.sellerHistory,
+      route: mapState.route,
       currentAreaLabel: mapState.currentAreaLabel,
     }),
     [mapState, camera],
@@ -543,6 +570,7 @@ export function MapScreenView() {
             sellers={mapState.visibleSellers}
             selectedSellerId={mapState.selectedSellerId}
             userLocation={mapState.userLocation}
+            route={mapState.route.status === 'success' ? mapState.route.route : null}
             camera={camera}
             onMapLoaded={() => dispatch({ type: 'MAP_LOADED' })}
             onCameraChange={handleCameraChange}
@@ -550,6 +578,7 @@ export function MapScreenView() {
             onSellerSelect={handleSellerSelect}
             onMapBackgroundClick={handleUnselect}
             centerRequestToken={centerRequestToken}
+            fitRouteRequestToken={fitRouteRequestToken}
           />
         </div>
 
@@ -563,6 +592,23 @@ export function MapScreenView() {
           )}
           <MapFabButton label="Моё местоположение" icon="📍" onClick={() => void handleCenterOnUser()} />
         </div>
+
+        {/* «Убрать маршрут» (MAP-020): левый нижний угол, зеркально панели FAB
+            справа. Показывается, пока маршрут построен или строится; клик
+            снимает полилинию (MapRuntime.clearRoute). Текст виден сразу —
+            это не круглая FAB с тултипом, а пилюля с белой поверхностью,
+            как у панели справа: иконка, затем подпись. */}
+        {mapState.route.status !== 'idle' && (
+          <button
+            type="button"
+            className="gm-map-route-clear"
+            onClick={handleClearRoute}
+            data-testid="clear-route"
+          >
+            <span className="gm-map-route-clear__icon" aria-hidden="true">🗺️</span>
+            <span className="gm-map-route-clear__text">Убрать маршрут</span>
+          </button>
+        )}
       </Content>
 
       {/* Bottom Sheet открыт и для карточки продавца, и для окон мастера

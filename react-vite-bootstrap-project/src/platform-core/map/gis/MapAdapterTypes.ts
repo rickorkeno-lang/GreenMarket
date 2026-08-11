@@ -1,5 +1,5 @@
 import type { SellerId } from "@/platform-core/contracts/Action";
-import type { CameraParams, GeoPoint, MapBounds, SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
+import type { CameraParams, GeoPoint, MapBounds, RouteModel, SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
 
 export type CameraChangeReason = "move" | "zoom";
 
@@ -18,6 +18,10 @@ export interface MapAdapterProps {
   selectedSellerId: SellerId | null;
   userLocation: GeoPoint | null;
   camera: CameraParams;
+  /** Маршрут до выбранного продавца (MAP-020) — декодированная полилиния.
+   *  null — маршрута нет (не запрашивался/убран). Реализация движка рисует
+   *  его как ломаную от точки пользователя к продавцу. */
+  route: RouteModel | null;
   onMapLoaded: () => void;
   onCameraChange: (camera: CameraParams, reason: CameraChangeReason) => void;
   onVisibleBoundsChange: (bounds: MapBounds) => void;
@@ -26,4 +30,10 @@ export interface MapAdapterProps {
   /** Императивный доступ для FAB "центрировать карту" — не завязан на
    *  конкретный движок: реализация решает, что значит "центрировать". */
   centerRequestToken: number;
+  /** Императивный запрос «показать весь маршрут» (MAP-020): инкрементируется
+   *  всякий раз, когда на карте появился новый построенный маршрут. Реализация
+   *  движка при смене токена подгоняет камеру так, чтобы весь маршрут был
+   *  виден целиком (с запасом в один зум-уровень). 0 — маршрута нет/запрос
+   *  ещё не поступал. */
+  fitRouteRequestToken: number;
 }

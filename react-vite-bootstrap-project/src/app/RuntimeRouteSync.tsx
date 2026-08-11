@@ -5,6 +5,7 @@ import {
   useRuntimeInstance,
 } from '@/platform-core/navigation-runtime-layer/hooks/useGreenMarketRuntime';
 import { currentEntry } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
+import { MapRuntime } from '@/platform-core/map/runtime/MapRuntime';
 import { entryFromPath, pathFromEntry } from '@/app/routeMapping';
 
 /**
@@ -61,6 +62,23 @@ export function RuntimeRouteSync() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- намеренно реагирует только на смену пути
   }, [location.pathname]);
+
+  // При уходе с карты маршрут убирается автоматически (MAP-020): полилиния
+  // живёт только пока открыт экран Map. Переход «страница продавца → карта»
+  // (маршрут построен на странице и должен дожить до карты) маршрут сохраняет,
+  // поэтому сравниваем предыдущий верхний экран, а не очищаем безусловно.
+  // Слушатель живёт здесь, а не в MapScreenView (уход = unmount): у RuntimeRouteSync
+  // нет собственного unmount при смене маршрута, и StrictMode-двойное
+  // монтирование не сотрёт маршрут сразу после входа на карту.
+  const prevTopScreenRef = useRef<string | null>(null);
+  useEffect(() => {
+    const top = currentEntry(runtime.getState().navigation).screen;
+    const prev = prevTopScreenRef.current;
+    prevTopScreenRef.current = top;
+    if (prev === 'Map' && top !== 'Map') {
+      MapRuntime.clearRoute();
+    }
+  }, [state, runtime]);
 
   // Runtime → URL
   useEffect(() => {
