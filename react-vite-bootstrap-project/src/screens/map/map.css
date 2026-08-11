@@ -6,6 +6,26 @@
   mix-blend-mode: normal;
 }
 
+/* ---------- Маршрут до продавца (MAP-020) ----------
+ * Полилиния OSRM рисуется двумя слоями: белая подложка (контраст с любыми
+ * тайлами и уличной сеткой) + цветная ломаная поверх (брендовый токен, тема
+ * light/dark). Классы вешаются на <path> через Leaflet pathOptions.className,
+ * поэтому правила должны переживать перерисовку слоя. */
+.gm-map-route {
+  stroke: var(--color-brand-primary-strong);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  opacity: 0.95;
+}
+
+.gm-map-route--casing {
+  stroke: #ffffff;
+  stroke-width: 9;
+  opacity: 0.7;
+}
+
 /* ---------- Map UI: панель плавающих кнопок (нижний правый угол) ----------
  * Белая поверхность (--color-surface-raised), чтобы иконки не сливались
  * с картой; кнопки равноудалены друг от друга и от краёв панели
@@ -46,6 +66,44 @@
   font-weight: var(--font-weight-medium);
   box-shadow: var(--elevation-3);
   animation: gm-map-fab-in var(--duration-normal) var(--easing-decelerate);
+}
+
+/* «Убрать маршрут» (MAP-020): левый нижний угол, зеркально панели FAB
+ * справа. Показывается, пока маршрут построен или строится; клик снимает
+ * полилинию. Это не круглая FAB с тултипом, а пилюля с постоянно видимым
+ * текстом — белая поверхность (как у панели справа): иконка, затем подпись. */
+.gm-map-route-clear {
+  position: absolute;
+  left: var(--space-lg);
+  bottom: var(--space-xxl);
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  box-shadow: var(--elevation-3);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  animation: gm-map-fab-in var(--duration-normal) var(--easing-decelerate);
+}
+
+.gm-map-route-clear:hover {
+  background: var(--color-surface-base);
+}
+
+.gm-map-route-clear:focus-visible {
+  outline: 2px solid var(--color-brand-primary-strong);
+  outline-offset: 2px;
+}
+
+.gm-map-route-clear__icon {
+  line-height: 1;
 }
 
 [data-theme='dark'] .gm-map-fab__tooltip {
@@ -103,49 +161,215 @@
   overscroll-behavior: contain;
 }
 
-/* ---------- Подпись над точкой продавца (MAP-067) ----------
- * Отдельный маркер продавца несёт название прямо над точкой: капсула
- * поверх .gm-map-marker__dot, выровненная по центру (замечание №58).
- * Точка остаётся единственным потоковым элементом (якорь не меняется),
- * подпись — absolute поверх неё, pointer-events: none, чтобы клики шли
- * только на точку. Название экранируется в LeafletAdapter (escapeHtml),
- * поэтому капсула безопасна при любых символах в имени. */
+/* ---------- Маркер продавца и подпись (MAP-067/MAP-068/MAP-026) ----------
+ * Структура/геометрия маркера генерируется в
+ * src/platform-core/map/gis/MarkerStyle.ts (чистый модуль, юнит-тестируется);
+ * здесь — только оформление на токенах темы. Маркер = контейнер
+ * .gm-map-marker (flex: точка по центру, якорь контейнера = центр точки) +
+ * подпись-капсула поверх точки (absolute, bottom: 100%, pointer-events: none —
+ * клики идут только на точку). Название экранируется в MarkerStyle, капсула
+ * безопасна при любых символах в имени (замечание №58).
+ *
+ * Контраст (MAP-026): у точки белая обводка + тёмная линия-контур (видна на
+ * светлых тайлах) + цветное свечение из токена через color-mix (следует
+ * light/dark). Масштаб свечения приходит из JS как --gm-glow-scale (0.3..8,
+ * зависит от zoom) — кольца/размытие считаются через calc() без пересоздания
+ * иконки. Hover и выбор обрабатываются CSS-переходами по transform (GPU, без
+ * анимации box-shadow на каждый кадр). */
+/* Контейнер иконки DivIcon. ВАЖНО: position:absolute здесь обязателен —
+ * .gm-map-marker — это КЛАСС ЛЕАФЛЕТА (leaflet-marker-icon в листинге классов),
+ * и leaflet.css позиционирует его через position:absolute; left:0; top:0 + transform.
+ * Если указать position:relative (как было раньше), он при равной специфичности
+ * перекроет absolute из leaflet.css (порядок в бандле непредсказуем), иконки
+ * упадут в обычный поток вёрстки и «поплывут» вниз на 13px × индекс DOM
+ * (13px = iconAnchor). Это смещение постоянно в пикселях, поэтому географическая
+ * ошибка менялась с каждым зумом (маркеры «меняли позицию»). Явный absolute
+ * здесь делает положение иконки не зависящим от порядка CSS в бандле.
+ * Подпись (absolute, bottom:100%) при этом всё равно якорится к контейнеру —
+ * absolute тоже является positioned-предком. */
 .gm-map-marker {
-  position: relative;
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
+.gm-map-marker__dot {
+  position: relative;
+  display: block;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  background: var(--color-brand-primary-light);
+  /* Рост точки при приближении (zoom-зависимо) — чистый CSS-трансформ вокруг
+   * центра: --gm-dot-scale приходит от LeafletAdapter на контейнере карты.
+   * Масштабирование через transform НЕ меняет якорь/геометрию DivIcon, поэтому
+   * точка всегда остаётся ровно на своих lat/lng (свечение — ниже, тоже из
+   * CSS-переменной). */
+  transform: scale(var(--gm-dot-scale, 1));
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 0 0 calc(4px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-brand-primary-light) 45%, transparent),
+    0 0 calc(16px * var(--gm-glow-scale, 1)) calc(4px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-brand-primary-light) 55%, transparent);
+  transition:
+    transform var(--duration-fast) var(--easing-standard),
+    box-shadow var(--duration-fast) var(--easing-standard);
+  cursor: pointer;
+}
+
+/* Выбранный продавец (MAP-026): акцентный цвет токена, заметно крупнее,
+ * усиленное кольцо и деликатная «пульсация» кольца (transparent ring,
+ * расширяется и тает), чтобы глаз сразу находил фокус. Кольцо — псевдоэлемент
+ * с transform/opacity, не перерисовывает box-shadow на каждом кадре. */
+.gm-map-marker__dot--selected {
+  background: var(--color-brand-accent);
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(0, 0, 0, 0.22),
+    0 0 0 calc(5px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-brand-accent) 40%, transparent),
+    0 0 calc(18px * var(--gm-glow-scale, 1)) calc(5px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-brand-accent) 50%, transparent);
+}
+
+.gm-map-marker__dot--selected::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--color-brand-accent) 75%, #ffffff);
+  pointer-events: none;
+  animation: gm-map-marker-pulse 2s var(--easing-standard) infinite;
+}
+
+@keyframes gm-map-marker-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  70%,
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gm-map-marker__dot--selected::after {
+    display: none;
+  }
+}
+
+/* Закрытый/недоступный продавец: нейтральный серый из токена, белая обводка
+ * и скромный ореол (сильнее не ровня зелёному, чтобы иерархия читалась),
+ * но точка не теряется даже на тёмных тайлах благодаря контуру. */
+.gm-map-marker__dot--disabled {
+  background: var(--color-disabled-content);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 0 0 calc(2px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-disabled-content) 40%, transparent),
+    0 0 calc(9px * var(--gm-glow-scale, 1)) calc(2px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-disabled-content) 35%, transparent);
+}
+
+/* Hover: точка заметно подрастает (transform — дёшево), подпись всплывает
+ * над соседями; скрытая коллизией подпись временно показывается — пользователь
+ * может прочитать название даже у перекрытого маркера, не меняя выбор. */
+.gm-map-marker:hover .gm-map-marker__dot {
+  transform: scale(calc(var(--gm-dot-scale, 1) * 1.25));
+}
+
+.gm-map-marker:hover .gm-map-marker__label {
+  z-index: 600;
+}
+
+/* MAP-070: скрытая подпись показывается при hover только когда карта
+ * «устаканилась» (класс gm-map--idle на контейнере от LabelCollisionBridge).
+ * Во время жеста (движение/зум) маркеры скользят под курсором, и без гейта
+ * каждый маркер под курсором мигал бы своей скрытой подписью — при MAP-069
+ * скрыты ОБЕ подписи перекрывающейся пары, поэтому мигали бы обе. */
+.gm-map--idle .gm-map-marker:hover .gm-map-marker__label--hidden {
+  visibility: visible;
+}
+
+/* Подпись-капсула: фон поверхности + рамка + тень, чтобы читаться на любых
+ * тайлах; «хвостик» (::after) визуально привязывает капсулу к своей точке —
+ * при густой карте понятно, чьё название. Длинные имена обрезаются (max-width
+ * + ellipsis), чтобы капсула не растягивалась во всю карту. */
 .gm-map-marker__label {
   position: absolute;
   left: 50%;
   bottom: 100%;
   transform: translateX(-50%);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  z-index: 500;
+  display: block;
+  max-width: 220px;
   white-space: nowrap;
-  padding: 2px 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 3px 9px;
   border-radius: 999px;
   background: var(--color-surface-raised);
   color: var(--color-text-primary);
+  border: 1px solid var(--color-border-default);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   line-height: 1.2;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  letter-spacing: 0.01em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.3);
   pointer-events: none;
-  z-index: 500;
 }
 
-/* Подпись, скрытая коллизионным разрешением (MAP-068): пересекающуюся
- * подпись скрываем через display:none, а не visibility, чтобы нулевой
- * bounding box исключал её из следующих проходов (см. LabelCollisionBridge). */
+.gm-map-marker__label::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  margin-top: -1px;
+  border: 5px solid transparent;
+  border-top-color: var(--color-surface-raised);
+}
+
+/* Подпись выбранного продавца — акцентная (тот же цвет, что точка): глаз
+ * связывает капсулу и маркер, даже если рядом есть другие подписи. */
+.gm-map-marker__label--selected {
+  background: var(--color-brand-accent);
+  border-color: color-mix(in srgb, var(--color-brand-accent-strong) 55%, transparent);
+  color: var(--color-text-on-accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+.gm-map-marker__label--selected::after {
+  border-top-color: var(--color-brand-accent);
+}
+
+/* Подпись, скрытая коллизионным разрешением (MAP-068): скрываем через
+ * visibility:hidden, а не display:none. Причина — у hidden-подписи остаётся
+ * реальный bounding box, и LabelCollisionBridge считает пересечения по
+ * геометрии прямоугольников, не показывая подпись физически заранее. У
+ * подписи НЕТ fade-анимации намеренно: элементы пересоздаются при выходе
+ * маркеров из кластеров (зум), и каждая анимация проигрывалась бы заново —
+ * подписи «потухали и вспыхивали». Появление/скрытие теперь мгновенное.
+ * При hover правило выше временно возвращает
+ * visibility:visible. */
 .gm-map-marker__label--hidden {
-  display: none;
+  visibility: hidden;
 }
 
-/* ---------- Кластеры продавцов (GM-UX-001) ----------
- * Кластер = точка продавца (как отдельный маркер) + бейдж с количеством
- * «слегка выше» точки. Все цвета из токенов темы (light/dark). */
+/* ---------- Кластеры продавцов (GM-UX-001/MAP-026) ----------
+ * Кластер = точка продавца (как отдельный маркер, внизу контейнера, у
+ * координаты) + бейдж с количеством чуть выше точки. Все цвета из токенов
+ * темы (light/dark); у бейджа белая обводка и светлый ореол — контраст на
+ * фоне тайлов и рядом с отдельными маркерами. Hover подрастает (transform). */
+/* Контейнер кластера — как и отдельный маркер, это класс иконки Leaflet
+ * (.leaflet-marker-icon): position:absolute обязателен, чтобы не перекрыть
+ * absolute из leaflet.css (иначе бейджи/точки кластеров «поплывут» в потоке). */
 .gm-map-cluster {
-  position: relative;
+  position: absolute;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
 }
 
 .gm-map-cluster__dot {
@@ -153,12 +377,17 @@
   left: 50%;
   bottom: 0;
   transform: translateX(-50%);
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 999px;
   background: var(--color-brand-primary-light);
   border: 2px solid #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35), 0 0 0 2px rgba(255, 255, 255, 0.25);
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(0, 0, 0, 0.15),
+    0 0 0 2px rgba(255, 255, 255, 0.35);
+  transition: transform var(--duration-fast) var(--easing-standard);
+  cursor: pointer;
 }
 
 .gm-map-cluster__count {
@@ -169,18 +398,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
   border-radius: 999px;
   background: var(--color-brand-primary-strong);
   color: var(--color-text-on-brand);
+  border: 2px solid #fff;
   font-family: var(--font-family-body);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
   line-height: 1;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.5);
   white-space: nowrap;
+  transition: transform var(--duration-fast) var(--easing-standard);
 }
 
 .gm-map-cluster__count::after {
@@ -192,6 +423,11 @@
   width: 2px;
   height: 6px;
   background: var(--color-brand-primary-strong);
+}
+
+.gm-map-cluster:hover .gm-map-cluster__dot,
+.gm-map-cluster:hover .gm-map-cluster__count {
+  transform: translateX(-50%) scale(1.15);
 }
 
 /* ---------- Строка поиска с автодополнением (MAP-019) ----------

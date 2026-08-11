@@ -79,6 +79,13 @@ export type Action =
    * (MapScreenView.handleBlockAction) — глобальный Runtime их не трогает.
    * -------------------------------------------------------------------- */
   | { type: "SEARCH_ORIGIN_MY_LOCATION" }
-  | { type: "SEARCH_ORIGIN_MAP_CENTER" };
+  | { type: "SEARCH_ORIGIN_MAP_CENTER" }
+  /* --------------------------------------------------------------------
+   * Маршрут до продавца на карте (MAP-020) НЕ является ContentBlock-действием:
+   * кнопок маршрута в карточке продавца нет (см. MapSheetAdapter), а
+   * построение/удаление маршрута живёт в MapRuntime — «Маршрут» на странице
+   * продавца вызывает MapRuntime#requestRoute, «Убрать маршрут» в углу карты —
+   * MapRuntime#clearRoute. */
+  ;
 
 export type ActionType = Action["type"];

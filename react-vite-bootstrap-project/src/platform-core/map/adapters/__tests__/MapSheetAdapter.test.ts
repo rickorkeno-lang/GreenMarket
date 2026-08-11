@@ -48,6 +48,7 @@ function viewModel(overrides: Partial<MapViewModel>): MapViewModel {
     sellerSearch: sellerSearch(),
     searchSuggestions: { query: "", loading: false, rawSuggestions: [], suggestions: [] },
     sellerHistory: [],
+    route: { status: "idle" },
     currentAreaLabel: null,
     ...overrides,
   };
@@ -74,6 +75,10 @@ function summary(blocks: ContentBlock[]): unknown[] {
           firstAvatar: b.items[0]?.avatar ?? null,
           firstAction: b.items[0]?.action ?? null,
         };
+      case "cardList":
+        return { type: "cardList", count: b.items.length, firstAction: b.items[0]?.action ?? null };
+      case "metaLine":
+        return { type: "metaLine", text: b.text };
       default:
         return { type: b.type };
     }
@@ -204,6 +209,104 @@ async function run() {
       firstAction: { type: "OPEN_SELLER", payload: { sellerId: asSellerId("seller-3") } },
     },
   ], "история: строки продавцов с действием «открыть страницу»");
+
+  // Маршрут (MAP-020): карточка продавца НЕ содержит кнопок/блоков маршрута —
+  // маршрут строится на странице продавца («Маршрут») и убирается кнопкой
+  // «Убрать маршрут» в углу карты. Содержимое карточки одинаково при любом
+  // состоянии маршрута: единственная строка — открытие продавца.
+  const routeIdle = MapSheetAdapter.toBlocks(
+    viewModel({ bottomSheet: "sellerSummary", selectedSellerId: asSellerId("seller-1"), sellers: [seller(1)], route: { status: "idle" } }),
+  );
+  assert.deepEqual(
+    routeIdle.filter((b) => b.type === "cardList").map((b) => b.items[0]?.action),
+    [{ type: "OPEN_SELLER", payload: { sellerId: asSellerId("seller-1") } }],
+    "route idle: в карточке только строка «Открыть продавца»",
+  );
+
+  // Маршрут строится — в карточке нет ни текста «Строим маршрут…», ни метрик
+  // маршрута: статус построения живёт на странице продавца и на самой карте.
+  const routeLoading = MapSheetAdapter.toBlocks(
+    viewModel({
+      bottomSheet: "sellerSummary",
+      selectedSellerId: asSellerId("seller-1"),
+      sellers: [seller(1)],
+      route: { status: "loading", sellerId: asSellerId("seller-1") },
+    }),
+  );
+  assert.deepEqual(
+    routeLoading.filter((b) => b.type === "text").map((b) => b.text),
+    ["Овощи и фрукты", "🟢 Открыт", "Открыто до 20:00"],
+    "route loading: без статуса построения маршрута в карточке",
+  );
+  assert.deepEqual(
+    routeLoading.filter((b) => b.type === "metaLine").map((b) => b.text),
+    ["⭐ 4.2 · 500 м"],
+    "route loading: в карточке только метрика рейтинга",
+  );
+
+  // Маршрут построен — метрики маршрута и кнопка «Убрать маршрут» в карточку
+  // НЕ попадают (полилиния показывается на канвасе карты, убирается кнопкой
+  // в углу карты).
+  const routeSuccess = MapSheetAdapter.toBlocks(
+    viewModel({
+      bottomSheet: "sellerSummary",
+      selectedSellerId: asSellerId("seller-1"),
+      sellers: [seller(1)],
+      route: {
+        status: "success",
+        sellerId: asSellerId("seller-1"),
+        route: {
+          geometry: [{ lat: 50.11, lng: 8.68 }, { lat: 50.12, lng: 8.69 }],
+          distanceMeters: 1895,
+          durationSeconds: 287,
+        },
+      },
+    }),
+  );
+  assert.deepEqual(
+    routeSuccess.filter((b) => b.type === "metaLine").map((b) => b.text),
+    ["⭐ 4.2 · 500 м"],
+    "route success: метрики маршрута в карточку не попадают",
+  );
+  assert.deepEqual(
+    routeSuccess.filter((b) => b.type === "cardList").map((b) => b.items[0]?.action),
+    [{ type: "OPEN_SELLER", payload: { sellerId: asSellerId("seller-1") } }],
+    "route success: в карточке нет кнопки «Убрать маршрут»",
+  );
+
+  // Ошибки построения маршрута показываются на странице продавца и на самой
+  // карте, но не в карточке Bottom Sheet.
+  const routeNoRoute = MapSheetAdapter.toBlocks(
+    viewModel({
+      bottomSheet: "sellerSummary",
+      selectedSellerId: asSellerId("seller-1"),
+      sellers: [seller(1)],
+      route: { status: "error", sellerId: asSellerId("seller-1"), kind: "no-route" },
+    }),
+  );
+  assert.ok(
+    !routeNoRoute.some((b) => b.type === "text" && b.text === "Маршрут до продавца не найден"),
+    "route no-route: сообщение об ошибке в карточку не попадает",
+  );
+  assert.deepEqual(
+    routeNoRoute.filter((b) => b.type === "cardList").map((b) => b.items[0]?.action),
+    [{ type: "OPEN_SELLER", payload: { sellerId: asSellerId("seller-1") } }],
+    "route no-route: кнопки повтора в карточке нет",
+  );
+
+  // Сетевой сбой — отдельное сообщение тоже не попадает в карточку.
+  const routeNetwork = MapSheetAdapter.toBlocks(
+    viewModel({
+      bottomSheet: "sellerSummary",
+      selectedSellerId: asSellerId("seller-1"),
+      sellers: [seller(1)],
+      route: { status: "error", sellerId: asSellerId("seller-1"), kind: "network" },
+    }),
+  );
+  assert.ok(
+    !routeNetwork.some((b) => b.type === "text" && b.text === "Не удалось построить маршрут"),
+    "route network: сообщение о сбое в карточку не попадает",
+  );
 
   console.log("MapSheetAdapter: все проверки пройдены");
 }

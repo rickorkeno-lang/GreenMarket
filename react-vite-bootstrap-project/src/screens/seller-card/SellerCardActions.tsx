@@ -25,11 +25,11 @@ export function SellerCardActions({ isFavorite, onToggleFavorite, onStartRoute, 
       </Button>
       <Button
         variant="secondary"
-        leadingIcon={<Icon label="Маршрут">🧭</Icon>}
+        leadingIcon={<Icon label="Построить маршрут">🧭</Icon>}
         onClick={onStartRoute}
         data-testid="seller-card-route"
       >
-        Маршрут
+        Построить маршрут
       </Button>
       <Button
         variant="secondary"
