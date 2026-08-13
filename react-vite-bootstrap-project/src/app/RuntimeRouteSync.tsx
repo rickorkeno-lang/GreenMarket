@@ -4,9 +4,9 @@ import {
   useGreenMarketRuntime,
   useRuntimeInstance,
 } from '@/platform-core/navigation-runtime-layer/hooks/useGreenMarketRuntime';
-import { currentEntry } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
+import { currentEntry, type ScreenId } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
 import { MapRuntime } from '@/platform-core/map/runtime/MapRuntime';
-import { entryFromPath, pathFromEntry } from '@/app/routeMapping';
+import { entryFromPath, isMapSurfaceScreen, pathFromEntry } from '@/app/routeMapping';
 
 /**
  * Мост между реальным GreenMarketRuntime (стек экранов Platform Core) и
@@ -63,19 +63,22 @@ export function RuntimeRouteSync() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- намеренно реагирует только на смену пути
   }, [location.pathname]);
 
-  // При уходе с карты маршрут убирается автоматически (MAP-020): полилиния
-  // живёт только пока открыт экран Map. Переход «страница продавца → карта»
-  // (маршрут построен на странице и должен дожить до карты) маршрут сохраняет,
-  // поэтому сравниваем предыдущий верхний экран, а не очищаем безусловно.
+  // При окончательном уходе с карты маршрут убирается автоматически (MAP-020):
+  // полилиния живёт только пока открыта карта-поверхность. ТЗ-024: карта —
+  // поверхность вне стека, экрана «Map» в стеке нет, поэтому ориентир —
+  // isMapSurfaceScreen (Main/SellerList/SellerCard/ProductCard/Search рендерятся
+  // ПОВЕРХ карты, и пока верх стека среди них — карта смонтирована). Переход
+  // «карточка продавца → карта» (маршрут построен на карточке и должен дожить
+  // до карты) маршрут сохраняет: SellerCard и Main — обе поверхности.
   // Слушатель живёт здесь, а не в MapScreenView (уход = unmount): у RuntimeRouteSync
   // нет собственного unmount при смене маршрута, и StrictMode-двойное
   // монтирование не сотрёт маршрут сразу после входа на карту.
-  const prevTopScreenRef = useRef<string | null>(null);
+  const prevTopScreenRef = useRef<ScreenId | null>(null);
   useEffect(() => {
     const top = currentEntry(runtime.getState().navigation).screen;
     const prev = prevTopScreenRef.current;
     prevTopScreenRef.current = top;
-    if (prev === 'Map' && top !== 'Map') {
+    if (prev !== null && isMapSurfaceScreen(prev) && !isMapSurfaceScreen(top)) {
       MapRuntime.clearRoute();
     }
   }, [state, runtime]);
@@ -89,8 +92,10 @@ export function RuntimeRouteSync() {
     // Читаем актуальное состояние Runtime через runtime.getState(), а не
     // замыкание `state`: в StrictMode (dev) эффекты монтируются дважды, и на
     // втором проходе замыкание `state` всё ещё содержит старый стек (напр.
-    // [Catalog]), из-за чего на deep-link /seller/:id происходил лишний
-    // navigate('/catalog'). getState() всегда возвращает свежий стек.
+    // [Catalog]), из-за чего происходил лишний navigate('/catalog'). getState()
+    // всегда возвращает свежий стек. pathFromEntry возвращает null для контента
+    // панели (SellerCard/SellerList — ТЗ-024: без URL), поэтому при открытии
+    // панели адресная строка не меняется.
     const entry = currentEntry(runtime.getState().navigation);
     const path = pathFromEntry(entry);
     if (path && path !== location.pathname) {

@@ -26,11 +26,14 @@ import { DistanceFormatter } from '@/platform-core/formatting/DistanceFormatter'
 import { SellerFilter } from '@/screens/filter/SellerFilter';
 
 /**
- * Экран «Все продавцы» (переход Map → Seller List, AR-003). Та же схема,
- * что у MapScreenView: данные приходят из Repository (весь каталог, без
- * геофильтра — список показывает всех продавцов), навигационные действия
- * идут через общий GreenMarketRuntime, а доменное состояние карты — через
- * MapRuntime (singleton, см. platform-core/map/runtime/MapRuntime.ts).
+ * Экран «Все продавцы» (переход Map → Seller List, AR-003). ТЗ-024 §10:
+ * список — контент Bottom Sheet ПОВЕРХ карты (рендерится MapSurface как
+ * оверлей над MapScreenView), а не отдельная страница: у него нет URL,
+ * карта за ним не размонтируется. Та же схема, что у MapScreenView: данные
+ * приходят из Repository (весь каталог, без геофильтра — список показывает
+ * всех продавцов), навигационные действия идут через общий
+ * GreenMarketRuntime, а доменное состояние карты — через MapRuntime
+ * (singleton, см. platform-core/map/runtime/MapRuntime.ts).
  *
  *  Фильтры продавцов (категория + состояние) — ОБЩИЕ с картой: состояние
  *  живёт в MapRuntime (selectedFilters), здесь тот же SellerFilter, и смена
@@ -48,12 +51,11 @@ import { SellerFilter } from '@/screens/filter/SellerFilter';
  *     его продавцов. Доменные функции — platform-core/map/product-search.
  *
  * Кнопка «назад» — хронология действий пользователя: она отматывает стек
- * навигации (BACK) и скрывается, когда история пуста (прямой вход по
- * ссылке — в этом случае стек сброшен ровно в один экран, isAtRoot).
+ * панели (BACK) и возвращает к «Главному экрану» Main (за которым карта).
  *
- * Клик по продавцу — вариант Б: возврат на карту + центрирование +
- * подсветка. Карта сама восстанавливает состояние из MapRuntime при
- * монтировании, поэтому MOVE_MAP/SELECT_SELLER отправляются до перехода.
+ * Клик по продавцу — возврат на карту + центрирование + подсветка: карта
+ * уже смонтирована за панелью, MOVE_MAP/SELECT_SELLER уходят в MapRuntime
+ * до BACK, и она появляется с выбранным продавцом.
  */
 type SellerListLoadState = 'loading' | 'error' | 'ready';
 
@@ -245,23 +247,19 @@ export function SellerListScreenView() {
     [],
   );
 
-  /** Вариант Б: показать продавца на карте. Карта под списком (или свежая,
-   *  если списка достигли по прямой ссылке) монтируется уже с центрированным
-   *  положением и выбранным продавцом — MapRuntime помнит состояние. */
+  /** Показать продавца на карте. ТЗ-024 §10: карта — корневая поверхность,
+   *  она уже смонтирована ЗА панелью (список открыт из «Главного экрана»
+   *  Main), поэтому выбор продавца просто закрывает панель (BACK) — страница
+   *  карты не открывается, MOVE_MAP/SELECT_SELLER уходят в MapRuntime до
+   *  перехода, и карта появляется уже с выбранным продавцом. */
   const handleSelectSeller = useCallback(
     (seller: SellerMapRecord) => {
       MapRuntime.dispatch({ type: 'MOVE_MAP', center: seller.location, zoom: ZOOM_ON_SELLER });
       MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: seller.sellerId });
       Diagnostics.track('seller_list.show_on_map', { sellerId: seller.sellerId });
-
-      const hasMapInHistory = state.navigation.stack.some((entry) => entry.screen === 'Map');
-      if (hasMapInHistory) {
-        dispatch({ type: 'BACK' });
-      } else {
-        dispatch({ type: 'OPEN_MAP' });
-      }
+      dispatch({ type: 'BACK' });
     },
-    [state.navigation.stack, dispatch],
+    [dispatch],
   );
 
   const isSearchActive = searchQuery.trim().length > 0;

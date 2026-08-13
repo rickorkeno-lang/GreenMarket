@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
 import { useGreenMarketRuntime } from '@/platform-core/navigation-runtime-layer/hooks/useGreenMarketRuntime';
 import { isAtRoot } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
-import { asSellerId } from '@/platform-core/contracts/Action';
 import { sellerRepository } from '@/platform-core/map/repository/repository';
-import { MapRuntime } from '@/platform-core/map/runtime/MapRuntime';
 import type { SellerProductRecord } from '@/platform-core/map/repository/SellerRepository';
 import type { RecommendedSeller } from '@/platform-core/map/recommendations/SellerRecommendations';
 import type { SellerCardViewModel } from '@/platform-core/viewmodels/SellerCardViewModel';
 import type { SellerMapRecord } from '@/platform-core/map/viewmodels/MapViewModel';
+import type { SellerId } from '@/platform-core/contracts/Action';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
 import { sellerStatus, type SellerStatusPresentation } from '@/platform-core/formatting/SellerStatus';
 import { copyTextToClipboard } from '@/platform-core/utils/clipboard';
@@ -64,11 +62,13 @@ const SHARE_NOTICE_TIMEOUT_MS = 4000;
  * состояние страницы (данные + служебные UI-состояния) и возвращает его
  * одной моделью; действия (share/favorite/route/back/recommendation) — тоже
  * здесь, чтобы экран оставался чисто презентационным.
+ *
+ * ТЗ-024 §10: карточка продавца — контент Bottom Sheet поверх карты, а не
+ * страница с URL, поэтому sellerId приходит из NavigationEntry (стек панели),
+ * а не из useParams(). Рендер карточки — MapSurface поверх MapScreenView.
  */
-export function useSellerCardController(): SellerCardPageModel {
+export function useSellerCardController(sellerId: SellerId): SellerCardPageModel {
   const { state, dispatch } = useGreenMarketRuntime();
-  const { sellerId: sellerIdParam } = useParams<{ sellerId: string }>();
-  const sellerId = sellerIdParam ? asSellerId(sellerIdParam) : null;
 
   const [loadState, setLoadState] = useState<SellerCardPageState>('loading');
   const [record, setRecord] = useState<SellerMapRecord | null>(null);
@@ -80,14 +80,6 @@ export function useSellerCardController(): SellerCardPageModel {
   const shareTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
-    if (!sellerId) {
-      setLoadState('ready');
-      setRecord(null);
-      setCard(null);
-      setProducts([]);
-      setRecommendations([]);
-      return;
-    }
     setLoadState('loading');
     try {
       const [recordRes, cardRes, productsRes, recommendationsRes] = await Promise.all([
@@ -147,20 +139,21 @@ export function useSellerCardController(): SellerCardPageModel {
     setIsFavorite((value) => !value);
   }, [dispatch, sellerId]);
 
-  /** «Маршрут» (MAP-020): строит маршрут до продавца в MapRuntime и сразу
-   *  отправляет пользователя на карту. Если страница продавца была открыта
-   *  с карты (под ней в стеке лежит Map) — возвращаемся на неё (BACK); иначе
-   *  карта открывается поверх (OPEN_MAP). Маршрут не привязан к выбору
-   *  продавца, поэтому данные передаются явно (record), даже если продавца
-   *  нет в видимой области карты. */
+  /** «Маршрут» (MAP-020, ТЗ-025 v1.1): карточка НЕ управляет картой напрямую —
+   *  диспатчит START_ROUTE { sellerId }, а маршрут строится по цепочке
+   *  Action → ActionHandlers → BusinessEvent ROUTE_STARTED → MapProjection →
+   *  MapRuntime#requestRoute; возврат на карту — навигационный эффект
+   *  START_ROUTE в GreenMarketRuntime#applyNavigation (ТЗ-024 §10: карта —
+   *  корневая поверхность вне стека, START_ROUTE закрывает панель и
+   *  возвращает Bottom Sheet к Main, за которым карта уже смонтирована).
+   *  Продавца проектор разрешает через SellerRepository сам, поэтому карточке
+   *  достаточно sellerId — она не знает ни MapRuntime, ни способ построения
+   *  маршрута. */
   const handleStartRoute = useCallback(() => {
-    if (!sellerId || !record) return;
+    if (!sellerId) return;
     Diagnostics.track('seller_card.start_route', { sellerId });
-    MapRuntime.requestRoute(sellerId, record);
-    const stack = state.navigation.stack;
-    const previous = stack.length > 1 ? stack[stack.length - 2] : null;
-    dispatch(previous?.screen === 'Map' ? { type: 'BACK' } : { type: 'OPEN_MAP' });
-  }, [dispatch, sellerId, record, state.navigation.stack]);
+    dispatch({ type: 'START_ROUTE', payload: { sellerId } });
+  }, [dispatch, sellerId]);
 
   const handleOpenRecommendation = useCallback(
     (recommendation: RecommendedSeller) => {

@@ -56,6 +56,11 @@ export function ProductScreen() {
           <Text variant="headline" as="h1">
             {state.product.name}
           </Text>
+          {state.product.group_name && (
+            <Text variant="caption" tone="secondary">
+              Категория: {state.product.group_name}
+            </Text>
+          )}
           {state.product.description && (
             <Text variant="body" tone="secondary">
               {state.product.description}

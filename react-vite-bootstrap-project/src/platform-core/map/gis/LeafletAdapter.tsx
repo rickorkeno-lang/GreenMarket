@@ -4,21 +4,24 @@ import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import type { MapAdapterProps } from "@/platform-core/map/gis/MapAdapterTypes";
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
-import type { SellerId } from "@/platform-core/contracts/Action";
+import type { MarketId, SellerId } from "@/platform-core/contracts/Action";
 import {
   buildClusterMarkerHtml,
+  buildMarketMarkerHtml,
   buildSellerMarkerHtml,
   CLUSTER_ICON_ANCHOR,
   CLUSTER_ICON_SIZE,
   dotScale,
   glowScale,
+  MARKET_ICON_ANCHOR,
+  MARKET_ICON_SIZE,
   sellerIconMetrics,
   sellerMarkerState,
 } from "@/platform-core/map/gis/MarkerStyle";
 import "leaflet/dist/leaflet.css";
 
 /** IMP-003.1 §3/§4: единственный файл во всём репозитории, которому
- *  разрешено импортировать "leaflet"/"react-leaflet" напрямую. MapScreen
+ *  разрешено импортировать "leaflet"/"react-leaflet" напрямую. MapScreenView
  *  (см. map/gis/MapAdapter.tsx) и остальной экран об этом файле не знают.
  *
  *  IMP-003.1.1 §1: Pan, колесо мыши, двойной клик и ограничение масштаба —
@@ -34,6 +37,25 @@ import "leaflet/dist/leaflet.css";
  *  внутренние bounds, маркеры не пропадают/не «прыгают» при зуммах, подписи
  *  не пересоздаются вместе с иконкой и не мигают. */
 const sellerIconCache = new Map<string, L.DivIcon>();
+
+/** Кэш DivIcon маркеров точек торговли (задача «Маркеты»): ключ = marketId:state.
+ *  Как у продавцов — геометрия от zoom не зависит, иконку пересоздавать незачем
+ *  (стабильная ссылка не дёргает marker.setIcon при ре-рендерах). */
+const marketIconCache = new Map<string, L.DivIcon>();
+
+function marketDivIcon(name: string, marketId: MarketId, sellerCount: number, selected: boolean): L.DivIcon {
+  const key = `${marketId}:${selected}`;
+  const cached = marketIconCache.get(key);
+  if (cached) return cached;
+  const icon = L.divIcon({
+    className: "gm-map-market",
+    html: buildMarketMarkerHtml(name, marketId, sellerCount, selected),
+    iconSize: [...MARKET_ICON_SIZE],
+    iconAnchor: [...MARKET_ICON_ANCHOR],
+  });
+  marketIconCache.set(key, icon);
+  return icon;
+}
 
 function sellerDivIcon(
   name: string,
@@ -414,6 +436,8 @@ function LabelCollisionBridge({
 export function LeafletAdapter({
   sellers,
   selectedSellerId,
+  markets,
+  selectedMarketId,
   userLocation,
   route,
   camera,
@@ -421,6 +445,7 @@ export function LeafletAdapter({
   onCameraChange,
   onVisibleBoundsChange,
   onSellerSelect,
+  onMarketSelect,
   onMapBackgroundClick,
   centerRequestToken,
   fitRouteRequestToken,
@@ -531,6 +556,23 @@ export function LeafletAdapter({
             />
           ))}
         </MarkerClusterGroup>
+
+        {/* Точки торговли (задача «Маркеты»): отдельный слой ПОСЛЕ кластеров,
+         *  чтобы пины рынков/лавок были поверх. НЕ кластеризуются (точек мало,
+         *  каждая — самостоятельная точка интереса) и НЕ участвуют в
+         *  LabelCollisionBridge (подписи подписей маркетов — .gm-map-market__label,
+         *  отдельный класс, см. MarkerStyle). zIndexOffset поднимает пин над
+         *  кластерами и спид-веером продавцов. Клик — onMarketSelect → попап
+         *  точки (MapRuntime.loadMarketSellers). */}
+        {markets.map((market) => (
+          <Marker
+            key={market.marketId}
+            position={[market.location.lat, market.location.lng]}
+            icon={marketDivIcon(market.name, market.marketId, market.sellerCount, market.marketId === selectedMarketId)}
+            eventHandlers={{ click: () => onMarketSelect(market.marketId) }}
+            zIndexOffset={400}
+          />
+        ))}
       </MapContainer>
     </div>
   );

@@ -14,11 +14,11 @@ export default defineConfig({
     port: 5173,
     open: false,
     proxy: {
-      // Обход CORS для локальной разработки, пока вопрос не решён на бэке
-      // (см. buyer_mvp/api.ts и бриф, раздел 10). В проде используется
+      // Обход CORS для локальной разработки (бриф, раздел 10; CORS на бэке
+      // настроен 29.07, HTTPS-домен поднят 30.07). В проде используется
       // VITE_API_BASE напрямую, прокси в билд не попадает.
       '/api/v1/catalog': {
-        target: 'http://104.171.133.95',
+        target: 'https://testapi.vnespecplanpodaz.online',
         changeOrigin: true,
       },
     },

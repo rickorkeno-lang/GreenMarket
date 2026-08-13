@@ -9,7 +9,7 @@ import { FavoritesScreen } from "@/platform-core/screens/FavoritesScreen";
 import { PurchaseOptionsScreen } from "@/platform-core/screens/PurchaseOptionsScreen";
 import { SellerCardScreen } from "@/platform-core/screens/SellerCardScreen";
 import { SellerCatalogScreen } from "@/platform-core/screens/SellerCatalogScreen";
-import { MapScreen } from "@/platform-core/screens/MapScreen";
+import { MainScreen } from "@/platform-core/screens/MainScreen";
 import { SellerListScreen } from "@/platform-core/screens/SellerListScreen";
 
 /** ScreenRegistry — единственная точка, где ScreenId (навигационное имя)
@@ -31,7 +31,7 @@ export const ScreenRegistry: Readonly<Record<ScreenId, ScreenDefinition<unknown>
   PurchaseOptions: PurchaseOptionsScreen as ScreenDefinition<unknown>,
   SellerCard: SellerCardScreen as ScreenDefinition<unknown>,
   SellerCatalog: SellerCatalogScreen as ScreenDefinition<unknown>,
-  Map: MapScreen as ScreenDefinition<unknown>,
+  Main: MainScreen as ScreenDefinition<unknown>,
   SellerList: SellerListScreen as ScreenDefinition<unknown>,
 };
 

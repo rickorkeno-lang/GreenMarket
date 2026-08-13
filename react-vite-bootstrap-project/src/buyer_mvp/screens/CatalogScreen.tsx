@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Text, Loader, ErrorState, EmptyState, Button } from '@/design-system/components';
 import { Grid, Stack, Row } from '@/layout';
-import { fetchProducts, CatalogApiError } from '../api';
+import { fetchProducts, fetchGroups, CatalogApiError } from '../api';
 import { SearchBar } from '../components/SearchBar';
 import { ProductCard } from '../components/ProductCard';
-import type { ProductListItem, SortOrder } from '../types';
+import type { ProductGroup, ProductListItem, SortOrder } from '../types';
 
 type LoadState =
   | { status: 'loading' }
@@ -17,6 +17,9 @@ export function CatalogScreen() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  // Чипы категорий грузятся независимо от списка: ошибка/пусто — просто
+  // не рисуем ряд, список товаров при этом не блокируется.
+  const [groups, setGroups] = useState<ProductGroup[] | null>(null);
 
   const search = searchParams.get('search') ?? '';
   const groupId = searchParams.get('group_id');
@@ -41,6 +44,12 @@ export function CatalogScreen() {
   }
 
   useEffect(load, [search, groupId, sort, page]);
+
+  useEffect(() => {
+    fetchGroups()
+      .then((res) => setGroups(res.groups))
+      .catch(() => setGroups(null));
+  }, []);
 
   function updateParam(key: string, value: string | null) {
     const next = new URLSearchParams(searchParams);
@@ -70,12 +79,29 @@ export function CatalogScreen() {
         <Button variant={sort === 'price' ? 'primary' : 'secondary'} size="sm" onClick={() => updateParam('sort', 'price')}>
           По цене
         </Button>
-        {groupId && (
-          <Button variant="ghost" size="sm" onClick={() => updateParam('group_id', null)}>
-            Сбросить категорию
-          </Button>
-        )}
       </Row>
+
+      {groups !== null && groups.length > 0 && (
+        <Row gap="sm" wrap role="navigation" aria-label="Категории">
+          <Button
+            size="sm"
+            variant={groupId ? 'ghost' : 'primary'}
+            onClick={() => updateParam('group_id', null)}
+          >
+            Все
+          </Button>
+          {[...groups].sort((a, b) => a.sort_order - b.sort_order).map((g) => (
+            <Button
+              key={g.id}
+              size="sm"
+              variant={groupId === String(g.id) ? 'primary' : 'ghost'}
+              onClick={() => updateParam('group_id', String(g.id))}
+            >
+              {g.name} ({g.product_count})
+            </Button>
+          ))}
+        </Row>
+      )}
 
       {state.status === 'loading' && <Loader size="lg" label="Загрузка каталога" />}
 

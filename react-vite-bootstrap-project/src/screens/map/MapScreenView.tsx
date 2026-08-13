@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Content, Header, Row, Stack } from '@/layout';
-import { Text, IconButton, Icon, BottomSheetSurface, Snackbar } from '@/design-system/components';
+import { Text, IconButton, Icon, Button, BottomSheetSurface, Snackbar } from '@/design-system/components';
 import { BottomSheetContainer, SnackbarContainer } from '@/containers';
 import { useGreenMarketRuntime } from '@/platform-core/navigation-runtime-layer/hooks/useGreenMarketRuntime';
-import type { Action, SellerId } from '@/platform-core/contracts/Action';
+import type { Action, MarketId, SellerId } from '@/platform-core/contracts/Action';
 import { GeoService } from '@/platform-core/map/gis/GeoService';
 import { MapAdapter } from '@/platform-core/map/gis/MapAdapter';
 import type { CameraChangeReason } from '@/platform-core/map/gis/MapAdapterTypes';
@@ -15,7 +15,13 @@ import {
 } from '@/platform-core/map/repository/SellerRepository';
 import { MapSessionStore } from '@/platform-core/map/persistence/MapSessionStore';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
-import type { CameraParams, GeoPoint, MapBounds, MapViewModel, SellerMapRecord } from '@/platform-core/map/viewmodels/MapViewModel';
+import type {
+  CameraParams,
+  GeoPoint,
+  MapBounds,
+  MapViewModel,
+  SellerMapRecord,
+} from '@/platform-core/map/viewmodels/MapViewModel';
 import type { ProductSellerMatch } from '@/platform-core/map/product-search/ProductSearch';
 import { MapBottomSheetContent } from '@/screens/map/MapBottomSheetContent';
 import { MapFabButton } from '@/screens/map/MapFabButton';
@@ -62,8 +68,15 @@ function parseRadiusKmToMeters(value: string): number | null {
  * Навигационные действия (OPEN_SELLER, OPEN_SELLER_LIST, OPEN_CATALOG,
  * MAP_LOADED и т.д.) по-прежнему проходят через общий GreenMarketRuntime —
  * MapRuntime дополняет его доменным слоем, а не заменяет Action Catalog.
+ *
+ * ТЗ-024 §10: карта — корневая ПОВЕРХНОСТЬ, а не экран стека (экрана «Map»
+ * в NavigationStack нет). Компонент рендерится по URL /map (MapSurface) и
+ * живёт, пока пользователь в разделе карты; SellerCard/SellerList — контент
+ * Bottom Sheet, который передаётся как `children` и монтируется ПОВЕРХ карты
+ * оверлеем, не размонтируя её. Пока оверлей открыт, собственный Bottom Sheet
+ * карты (поиск/история/карточка маркера) не показывается.
  */
-export function MapScreenView() {
+export function MapScreenView({ children }: { children?: ReactNode }) {
   const { dispatch } = useGreenMarketRuntime();
   const mapState = useSyncExternalStore(MapRuntime.subscribe, MapRuntime.getState);
 
@@ -146,6 +159,23 @@ export function MapScreenView() {
     routeStatusRef.current = status;
     if (becameSuccess) setFitRouteRequestToken((t) => t + 1);
   }, [mapState.route]);
+
+  // Ошибка геолокации для точки старта маршрута (MAP-020): когда определить
+  // местоположение не удалось, MapRuntime НЕ строит маршрут (молчаливый фолбэк
+  // на центр карты дал бы ложный маршрут) и переводит route в error с kind
+  // no-permission/unavailable. Показываем ту же ошибку, что у кнопок «Моё
+  // местоположение» и «Поиск продавцов» (showLocationNotice — один обработчик).
+  // Текущий kind прошлого кадра держим в ref: при повторной попытке
+  // (loading → error) и при монтировании уже с ошибкой (маршрут запрошен на
+  // странице продавца) snackbar показывается снова.
+  const routeLocationErrorRef = useRef<'unavailable' | 'no-permission' | null>(null);
+  useEffect(() => {
+    const kind = mapState.route.status === 'error' ? mapState.route.kind : null;
+    const locationKind = kind === 'no-permission' || kind === 'unavailable' ? kind : null;
+    const prev = routeLocationErrorRef.current;
+    routeLocationErrorRef.current = locationKind;
+    if (locationKind !== null && locationKind !== prev) showLocationNotice(locationKind);
+  }, [mapState.route, showLocationNotice]);
 
   // Актуализация копии истории просмотра в MapRuntime: запись могла появиться
   // на странице продавца, пока карта была размонтирована, — чтобы кнопка
@@ -261,9 +291,23 @@ export function MapScreenView() {
   );
 
   const handleUnselect = useCallback(() => {
+    // Попап точки торговли закрывается отдельным действием (UNSELECT_MARKET):
+    // он не трогает маршрут и мастер поиска, а только сбрасывает выбор/список
+    // продавцов точки. Остальные окна листа — по-прежнему через UNSELECT_SELLER.
+    if (mapState.bottomSheet === 'marketSellers') {
+      MapRuntime.dispatch({ type: 'UNSELECT_MARKET' });
+      return;
+    }
     dispatch({ type: 'UNSELECT_SELLER' });
     MapRuntime.dispatch({ type: 'UNSELECT_SELLER' });
-  }, [dispatch]);
+  }, [dispatch, mapState.bottomSheet]);
+
+  /** Клик по пину точки торговли (задача «Маркеты»): открывает её попап и
+   *  запрашивает продавцов (MapRuntime.loadMarketSellers: SELECT_MARKET →
+   *  bottomSheet = marketSellers, затем список точки). */
+  const handleMarketSelect = useCallback((marketId: MarketId) => {
+    MapRuntime.loadMarketSellers(marketId);
+  }, []);
 
   /** «Убрать маршрут» (кнопка в левом нижнем углу карты, MAP-020): снимает
    *  полилинию и переводит состояние маршрута в idle. */
@@ -409,6 +453,16 @@ export function MapScreenView() {
         case 'SEARCH_ORIGIN_MAP_CENTER':
           handleSearchOriginMapCenter();
           break;
+        // Попап точки торговли (задача «Маркеты»): «Построить маршрут» до точки
+        // (MapRuntime.requestRoute с target { kind: "market" }) и «Повторить»
+        // при ошибке загрузки продавцов. Как SEARCH_ORIGIN_* — эти действия
+        // глобальный Runtime не трогает (навигации нет), обрабатываются здесь.
+        case 'START_MARKET_ROUTE':
+          MapRuntime.requestRoute({ kind: 'market', marketId: action.payload.marketId });
+          break;
+        case 'RETRY_MARKET_SELLERS':
+          MapRuntime.retryMarketSellers();
+          break;
       }
     },
     [handleOpenSellerCard, handleSelectListSeller, handleSearchOriginMyLocation, handleSearchOriginMapCenter],
@@ -505,6 +559,14 @@ export function MapScreenView() {
     () => ({
       state: mapState.error ? 'error' : mapState.loading ? 'loading' : mapState.visibleSellers.length === 0 ? 'empty' : 'success',
       sellers: mapState.visibleSellers,
+      markets: mapState.markets,
+      marketsLoading: mapState.marketsLoading,
+      marketsError: mapState.marketsError,
+      selectedMarketId: mapState.selectedMarketId,
+      marketSellers: mapState.marketSellers,
+      marketSellersMarketId: mapState.marketSellersMarketId,
+      marketSellersLoading: mapState.marketSellersLoading,
+      marketSellersFailed: mapState.marketSellersFailed,
       searchResult: mapState.searchResult,
       selectedSellerId: mapState.selectedSellerId,
       userLocation: mapState.userLocation,
@@ -519,6 +581,12 @@ export function MapScreenView() {
     }),
     [mapState, camera],
   );
+
+  // Выбранная точка торговли для шапки её попапа (название, адрес). Всегда
+  // актуальна при bottomSheet = "marketSellers" (см. reducer SELECT_MARKET).
+  const selectedMarket = mapState.markets.find(
+    (m) => m.marketId === mapState.selectedMarketId,
+  ) ?? null;
 
   const bottomSheetBlocks = useMemo(() => MapBuilder.build(viewModel), [viewModel]);
 
@@ -556,19 +624,19 @@ export function MapScreenView() {
         </Row>
       </Header>
 
-      {mapState.currentAreaLabel && (
-        <div data-testid="current-area-label" style={{ padding: 'var(--space-xs) var(--space-lg)' }}>
-          <Text variant="caption" tone="secondary">
-            📍 {mapState.currentAreaLabel}
-          </Text>
-        </div>
-      )}
+      <div data-testid="current-area-label" style={{ padding: 'var(--space-xs) var(--space-lg)' }}>
+        <Text variant="caption" tone="secondary">
+          📍 {mapState.currentAreaLabel ?? 'Определяется...'}
+        </Text>
+      </div>
 
       <Content style={{ position: 'relative', flex: 1, padding: 0 }}>
         <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
           <MapAdapter
             sellers={mapState.visibleSellers}
             selectedSellerId={mapState.selectedSellerId}
+            markets={mapState.markets}
+            selectedMarketId={mapState.selectedMarketId}
             userLocation={mapState.userLocation}
             route={mapState.route.status === 'success' ? mapState.route.route : null}
             camera={camera}
@@ -576,6 +644,7 @@ export function MapScreenView() {
             onCameraChange={handleCameraChange}
             onVisibleBoundsChange={handleVisibleBoundsChange}
             onSellerSelect={handleSellerSelect}
+            onMarketSelect={handleMarketSelect}
             onMapBackgroundClick={handleUnselect}
             centerRequestToken={centerRequestToken}
             fitRouteRequestToken={fitRouteRequestToken}
@@ -614,8 +683,10 @@ export function MapScreenView() {
       {/* Bottom Sheet открыт и для карточки продавца, и для окон мастера
           «Поиск продавцов» — всё живёт в MapRuntime.bottomSheet. Шаги мастера
           рендерят собственный заголовок (и «назад» для результатов), ввод
-          радиуса и единый фильтр продавцов; список строк строит MapBuilder. */}
-      {mapState.bottomSheet !== 'hidden' && (
+          радиуса и единый фильтр продавцов; список строк строит MapBuilder.
+          Если поверх карты смонтирован оверлей (children — SellerCard/
+          SellerList, ТЗ-024: контент Bottom Sheet), собственный лист скрыт. */}
+      {mapState.bottomSheet !== 'hidden' && !children && (
         <BottomSheetContainer
           onDismiss={handleUnselect}
           labelledBy="map-seller-sheet-title"
@@ -628,7 +699,56 @@ export function MapScreenView() {
               </IconButton>
             }
           >
-            {mapState.bottomSheet === 'sellerSearchOrigin' ? (
+            {mapState.bottomSheet === 'marketSellers' ? (
+              <Stack gap="sm" className="gm-market-sellers">
+                {/* Шапка попапа точки торговли (задача «Маркеты»): «назад» +
+                    название/адрес точки + кнопка «Построить маршрут». Не
+                    скроллится и не выталкивается длинным списком продавцов за
+                    экран — список скроллится в собственном блоке (тот же
+                    паттерн, что у результатов поиска, MAP-053). Кнопка маршрута
+                    ВСЕГДА видна, независимо от состояния списка. */}
+                <div className="gm-market-sellers__header">
+                  <Stack gap="sm">
+                    <Row gap="sm" align="center" style={{ position: 'relative', width: '100%' }}>
+                      <IconButton label="Назад" onClick={handleUnselect} data-testid="market-sellers-back">
+                        <Icon label="Назад">←</Icon>
+                      </IconButton>
+                      <Stack gap="xs">
+                        <Text variant="title" as="h2" id="map-seller-sheet-title">
+                          {selectedMarket?.name ?? 'Точка торговли'}
+                        </Text>
+                        {selectedMarket?.address && (
+                          <Text variant="caption" tone="secondary">
+                            {selectedMarket.address}
+                          </Text>
+                        )}
+                      </Stack>
+                    </Row>
+                    <Button
+                      variant="primary"
+                      onClick={() =>
+                        handleBlockAction({
+                          type: 'START_MARKET_ROUTE',
+                          // Попап рисуется только при bottomSheet = "marketSellers",
+                          // а значит выбранная точка гарантированно есть.
+                          payload: { marketId: selectedMarket!.marketId },
+                        })
+                      }
+                      data-testid="market-route-button"
+                    >
+                      Построить маршрут
+                    </Button>
+                  </Stack>
+                </div>
+                <div className="gm-market-sellers__list">
+                  <MapBottomSheetContent
+                    blocks={bottomSheetBlocks}
+                    onRetry={() => MapRuntime.retryMarketSellers()}
+                    onAction={handleBlockAction}
+                  />
+                </div>
+              </Stack>
+            ) : mapState.bottomSheet === 'sellerSearchOrigin' ? (
               <Stack gap="sm">
                 <Text variant="title" as="h2" id="map-seller-sheet-title">
                   Поиск продавцов
@@ -737,6 +857,11 @@ export function MapScreenView() {
           </Snackbar>
         </SnackbarContainer>
       )}
+
+      {/* Оверлей контента Bottom Sheet поверх карты (SellerCard/SellerList,
+          MapSurface). Карта остаётся смонтированной за оверлеем — смена
+          «Главного экрана» панели на карточку/список не пересоздаёт её. */}
+      {children}
     </div>
   );
 }

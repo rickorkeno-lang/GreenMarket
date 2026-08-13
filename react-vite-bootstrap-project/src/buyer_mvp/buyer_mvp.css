@@ -45,6 +45,75 @@
   border-color: var(--gm-color-accent, #2f7a4d);
 }
 
+.gm-buyer-photo-strip__open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+}
+
+.gm-buyer-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.gm-buyer-lightbox__content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 92vw;
+  max-height: 92vh;
+}
+
+.gm-buyer-lightbox__img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  border-radius: var(--gm-radius-md, 8px);
+}
+
+.gm-buyer-lightbox__close {
+  position: absolute;
+  top: -48px;
+  right: 0;
+  color: #fff;
+  font-size: 24px;
+}
+
+.gm-buyer-lightbox__nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #fff;
+  font-size: 28px;
+}
+
+.gm-buyer-lightbox__nav--prev {
+  left: -56px;
+}
+
+.gm-buyer-lightbox__nav--next {
+  right: -56px;
+}
+
+.gm-buyer-lightbox__counter {
+  position: absolute;
+  bottom: -36px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+}
+
 .gm-buyer-photo--placeholder {
   display: flex;
   align-items: center;

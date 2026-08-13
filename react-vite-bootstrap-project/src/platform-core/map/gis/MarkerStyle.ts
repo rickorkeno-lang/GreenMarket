@@ -1,4 +1,4 @@
-import type { SellerId } from "@/platform-core/contracts/Action";
+import type { MarketId, SellerId } from "@/platform-core/contracts/Action";
 
 /* ============================================================================
  * MarkerStyle — MAP-026. Чистая фабрика HTML/геометрии маркеров продавцов.
@@ -158,5 +158,57 @@ export function buildClusterMarkerHtml(count: number): string {
   return (
     `<span data-testid="seller-cluster" class="gm-map-cluster__count">${count}</span>` +
     `<span class="gm-map-cluster__dot"></span>`
+  );
+}
+
+/* ============================================================================
+ * Маркер точки торговли (задача «Маркеты»). Отдельный визуальный язык от
+ * точек продавцов: рынок/лавка — это МЕСТО (пин-«булавка»), а не точка.
+ * Счётчик продавцов в булавке — аналог бейджа кластера, но это данные
+ * API, а не текущий зум. Как и у продавцов, структура/геометрия строятся
+ * здесь (чистый модуль), оформление — в map.css, в LeafletAdapter только
+ * L.divIcon. Класс подписи .gm-map-market__label намеренно ОТЛИЧЕН от
+ * .gm-map-marker__label: подписи точек торговли не участвуют в коллизионном
+ * разрешении LabelCollisionBridge (точек мало, они далеко друг от друга),
+ * а в паре с маркерами продавцов приоритет у подписи маркета.
+ * ========================================================================== */
+
+/** Метрики контейнера DivIcon маркера точки торговли. Булавка — квадрат
+ *  34px, повёрнутый на 45° (круглый верх, остриё внизу): его габаритный
+ *  бокс — 34·√2 ≈ 48px. Якорь — остриё булавки, т.е. точка контакта с
+ *  координатой места. */
+export const MARKET_ICON_SIZE: readonly [number, number] = [48, 48];
+export const MARKET_ICON_ANCHOR: readonly [number, number] = [24, 48];
+
+export interface MarketIconMetrics {
+  size: [number, number];
+  anchor: [number, number];
+}
+
+export function marketIconMetrics(): MarketIconMetrics {
+  return { size: [...MARKET_ICON_SIZE], anchor: [...MARKET_ICON_ANCHOR] };
+}
+
+/** Разметка DivIcon маркера точки торговли: подпись-капсула (как у продавцов,
+ *  но выше — над булавкой) + булавка со счётчиком продавцов. Модификатор
+ *  --selected — выбранная точка (открыт её попап). Клики идут только на
+ *  булавку (label pointer-events: none, как у продавцов). Размер/якорь
+ *  контейнера задаются в LeafletAdapter из MARKET_ICON_SIZE/MARKET_ICON_ANCHOR —
+ *  здесь только структура и классы. */
+export function buildMarketMarkerHtml(
+  name: string,
+  marketId: MarketId,
+  sellerCount: number,
+  selected: boolean,
+): string {
+  const safeName = escapeHtml(name);
+  const safeId = escapeHtml(marketId);
+  const selectedClass = selected ? " gm-map-market__pin--selected" : "";
+  return (
+    `<span class="gm-map-market__label" title="${safeName}">${safeName}</span>` +
+    `<span class="gm-map-market__pin${selectedClass}" data-testid="market-marker" ` +
+    `data-market-id="${safeId}" title="${safeName}">` +
+    `<span class="gm-map-market__count">${sellerCount}</span>` +
+    `</span>`
   );
 }

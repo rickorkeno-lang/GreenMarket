@@ -576,3 +576,118 @@
   font-size: var(--font-size-sm);
 }
 
+/* ---------- Попап точки торговли (задача «Маркеты») ----------
+ * Шапка (название, адрес, кнопка «Построить маршрут») всегда видна, список
+ * продавцов скроллится в собственном блоке — тот же паттерн, что у результатов
+ * поиска (MAP-053): длинный список не выталкивает шапку за экран. */
+.gm-market-sellers {
+  max-height: min(70vh, 560px);
+}
+
+.gm-market-sellers__header {
+  flex: none;
+}
+
+.gm-market-sellers__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--space-xs);
+  overscroll-behavior: contain;
+}
+
+/* ---------- Маркер точки торговли (задача «Маркеты») ----------
+ * Структура генерируется в MarkerStyle.ts; здесь — только оформление на
+ * токенах темы. Пин-«булавка» = квадрат 34px, повёрнутый на 45° (круглый верх,
+ * остриё внизу): габаритный бокс 34·√2 ≈ 48px = размер контейнера
+ * (MARKET_ICON_SIZE), якорь — остриё булавки [24, 48] (MARKET_ICON_ANCHOR),
+ * т.е. точка контакта с координатой места. Счётчик продавцов — бейдж в центре
+ * булавки (контрповорот -45° держит текст прямо). Подпись-капсула над
+ * булавкой — свой класс .gm-map-market__label: НЕ участвует в коллизионном
+ * разрешении LabelCollisionBridge (точек мало) и не путается с подписями
+ * продавцов. Клики идут только на булавку (label pointer-events: none). */
+/* Контейнер иконки DivIcon — как и у продавцов/кластеров, это класс Leaflet
+ * (.leaflet-marker-icon): position:absolute обязателен, чтобы не перекрыть
+ * absolute из leaflet.css. */
+.gm-map-market {
+  position: absolute;
+}
+
+.gm-map-market__pin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(45deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  /* Вершины после поворота на 45°: верх ← исходный верхний-левый угол,
+   *  низ (остриё) ← исходный нижний-правый → его радиус = 0. */
+  border-radius: 10px 10px 0 10px;
+  background: var(--color-brand-primary-strong);
+  border: 2px solid #ffffff;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--easing-standard);
+}
+
+.gm-map-market__pin:hover {
+  transform: translate(-50%, -50%) rotate(45deg) scale(1.08);
+}
+
+/* Счётчик продавцов: белый бейдж на булавке, контрповорот -45° (компенсирует
+ * поворот родителя — цифры читаются прямо). */
+.gm-map-market__count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--color-brand-primary-strong);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+  transform: rotate(-45deg);
+}
+
+/* Выбранная точка (открыт её попап): акцентный цвет, как точка выбранного
+ * продавца — глаз связывает булавку и попап. */
+.gm-map-market__pin--selected {
+  background: var(--color-brand-accent);
+}
+
+.gm-map-market__pin--selected .gm-map-market__count {
+  color: var(--color-brand-accent);
+}
+
+.gm-map-market__label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  display: block;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-default);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+}
+

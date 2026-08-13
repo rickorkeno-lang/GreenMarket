@@ -79,7 +79,7 @@ function run() {
   // 7. forceNavigate после forceReset: обычные переходы пользователя push'ятся.
   const runtime8 = createGreenMarketRuntime();
   runtime8.forceReset({ screen: "SellerList", params: {} });
-  runtime8.forceNavigate({ screen: "Map", params: {} });
+  runtime8.forceNavigate({ screen: "Main", params: {} });
   assert.equal(runtime8.getState().navigation.stack.length, 2, "forceNavigate после forceReset: переход пользователя кладётся поверх");
 
   // 8. SellerCard: OPEN_SELLER (переход из блока «Похожие продавцы») разрешён
@@ -92,6 +92,48 @@ function run() {
   assert.ok(acceptedAgain, "SellerCard: OPEN_SELLER входит в availableActions (рекомендации)");
   assert.equal(currentEntry(runtime9.getState().navigation).screen, "SellerCard", "SellerCard: открыт другой продавец");
   assert.equal(runtime9.getState().navigation.stack.length, 3, "SellerCard: карточка другого продавца положена поверх");
+
+  // 9. START_ROUTE (ТЗ-025) / OPEN_MAP (ТЗ-024 §10): карта — корневая
+  //    ПОВЕРХНОСТЬ вне стека, экрана «Map» нет. Навигационный эффект — вернуться
+  //    к «Главному экрану» панели Main: если Main в стеке (карта смонтирована,
+  //    карточка открыта с неё) — стек усекается до Main (pop, панель закрывается);
+  //    если Main нет (карточка открыта с каталога) — Main открывается поверх (push).
+  const runtimeStartRoutePop = createGreenMarketRuntime();
+  runtimeStartRoutePop.dispatch({ type: "OPEN_MAP" });
+  runtimeStartRoutePop.dispatch({ type: "OPEN_SELLER", payload: { sellerId } });
+  runtimeStartRoutePop.dispatch({ type: "START_ROUTE", payload: { sellerId } });
+  assert.equal(
+    currentEntry(runtimeStartRoutePop.getState().navigation).screen,
+    "Main",
+    "START_ROUTE: возврат к «Главному экрану» карты (Main), если карточка открыта с карты"
+  );
+  assert.equal(
+    runtimeStartRoutePop.getState().navigation.stack.length,
+    2,
+    "START_ROUTE: стек усечён до Main, Main не задвоен"
+  );
+
+  const runtimeStartRoutePush = createGreenMarketRuntime();
+  runtimeStartRoutePush.dispatch({ type: "OPEN_SELLER", payload: { sellerId } });
+  runtimeStartRoutePush.dispatch({ type: "START_ROUTE", payload: { sellerId } });
+  assert.equal(
+    currentEntry(runtimeStartRoutePush.getState().navigation).screen,
+    "Main",
+    "START_ROUTE: Main открывается поверх, если карточка открыта не с карты"
+  );
+  assert.equal(runtimeStartRoutePush.getState().navigation.stack.length, 3, "START_ROUTE: push Main поверх");
+
+  // 10. OPEN_MAP — тот же навигационный эффект, что у START_ROUTE. На карточке
+  //     OPEN_MAP не входит в availableActions (туда ведёт START_ROUTE), поэтому
+  //     усечение до Main проверяем со списка продавцов (SellerList OPEN_MAP разрешает).
+  const runtimeOpenMap = createGreenMarketRuntime();
+  runtimeOpenMap.dispatch({ type: "OPEN_MAP" });
+  assert.equal(currentEntry(runtimeOpenMap.getState().navigation).screen, "Main", "OPEN_MAP: открывает Main (карта-поверхность)");
+  assert.equal(runtimeOpenMap.getState().navigation.stack.length, 2, "OPEN_MAP: Main поверх Catalog");
+  runtimeOpenMap.dispatch({ type: "OPEN_SELLER_LIST" });
+  runtimeOpenMap.dispatch({ type: "OPEN_MAP" });
+  assert.equal(currentEntry(runtimeOpenMap.getState().navigation).screen, "Main", "OPEN_MAP: усекает стек до Main (панель закрыта)");
+  assert.equal(runtimeOpenMap.getState().navigation.stack.length, 2, "OPEN_MAP: Main не задвоен");
 
   console.log("GreenMarketRuntime: все проверки пройдены");
 }

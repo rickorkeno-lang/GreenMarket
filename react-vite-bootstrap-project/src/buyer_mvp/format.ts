@@ -23,3 +23,25 @@ export function formatOfferCount(count: number): string {
   }
   return `${count} ${word}`;
 }
+
+/**
+ * Датировка завоза предложения. Строка «ГГГГ-ММ-ДД» из SellerOffer.supply_date;
+ * сравнение с текущей датой — на стороне UI (сервер дату не размечает).
+ * Прошедшая/сегодняшняя — состоявшийся завоз («Привезено 01.08»), будущая —
+ * планируемая поставка («Ожидается 12.08»). Пустая/некорректная дата → null
+ * (строка в карточке не выводится).
+ */
+export function formatSupplyDate(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) {
+    return null;
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const label = date.getTime() <= today.getTime() ? 'Привезено' : 'Ожидается';
+  return `${label} ${day}.${month}`;
+}

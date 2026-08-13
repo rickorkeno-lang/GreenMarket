@@ -26,11 +26,13 @@ export type ScreenId =
   | "PurchaseOptions"
   | "SellerCard"
   | "SellerCatalog"
-  /* AR-003: Map — полноценный экран, НЕ корневой (см. ROOT_ENTRY ниже).
-   * SellerList не существовал ни в одной версии присланного архива —
-   * добавлен как отдельный ScreenId, т.к. AR-003 явно требует переход
-   * Map → Seller List; реализация экрана — отдельная задача. */
-  | "Map"
+  /* ТЗ-024: навигационный стек — это стек контента Bottom Sheet (панели
+   * поверх карты), а НЕ стек страниц. Карта — корневая поверхность и в стек
+   * НЕ входит (§10 «Карта не входит в стек»): экран Map как Navigation Entry
+   * удалён. Main — «Главный экран» панели: дефолтный контент Bottom Sheet
+   * поверх карты (секции продавцов/поиск/история). SellerCard/SellerList/
+   * ProductCard — тоже контент панели, а не страницы (у них нет URL). */
+  | "Main"
   | "SellerList";
 
 /** Параметры каждого экрана — минимально необходимые для построения его
@@ -47,7 +49,7 @@ export interface ScreenParamsMap {
   PurchaseOptions: Record<string, never>;
   SellerCard: { sellerId: SellerId };
   SellerCatalog: { sellerId: SellerId; categoryId?: CategoryId };
-  Map: Record<string, never>;
+  Main: Record<string, never>;
   SellerList: Record<string, never>;
 }
 

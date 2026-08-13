@@ -1,8 +1,6 @@
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { PlaceholderScreen } from '@/screens/PlaceholderScreen';
-import { MapScreenView } from '@/screens/map/MapScreenView';
-import { SellerListScreenView } from '@/screens/seller-list/SellerListScreenView';
-import { SellerCardScreenView } from '@/screens/seller-card/SellerCardScreenView';
+import { MapSurface } from '@/app/MapSurface';
 import { Header, Page, Row } from '@/layout';
 import { Text } from '@/design-system/components';
 import '@/buyer_mvp/buyer_mvp.css';
@@ -17,7 +15,7 @@ const navItems = [
   { to: '/profile', label: 'Профиль' },
 ];
 
-const FULL_SCREEN_ROUTES = new Set(['/map', '/seller-list']);
+const FULL_SCREEN_ROUTES = new Set(['/map']);
 
 function TopNav() {
   return (
@@ -46,24 +44,23 @@ function TopNav() {
 
 /**
  * Stage 1 routing scaffold, composed from the Design System's Layout
- * primitives. Map (IMP-003.1), Seller List (AR-003: Map → Seller List) and
- * Seller Card (ТЗ-025: detail page) are full-screen routes with their own
- * Header/back button — they deliberately skip the shared TopNav/Page chrome
- * used by the remaining placeholders.
+ * primitives. Map (IMP-003.1) — корневая поверхность: полноэкранный route
+ * /map, который рендерит MapSurface (карта + контент Bottom Sheet поверх неё:
+ * Seller Card / Seller List, ТЗ-024 §10). Контент панели — НЕ страницы: у
+ * них нет собственных маршрутов, адресная строка остаётся /map, а карта не
+ * размонтируется. Остальные страницы — каталог/корзина/профиль — под шапкой
+ * с навигацией по разделам.
  */
 export function NavigationContainer() {
   const location = useLocation();
-  const isFullScreenRoute =
-    FULL_SCREEN_ROUTES.has(location.pathname) || location.pathname.startsWith('/seller/');
+  const isFullScreenRoute = FULL_SCREEN_ROUTES.has(location.pathname);
 
   return (
     <>
       {!isFullScreenRoute && <TopNav />}
       {isFullScreenRoute ? (
         <Routes>
-          <Route path="/map" element={<MapScreenView />} />
-          <Route path="/seller-list" element={<SellerListScreenView />} />
-          <Route path="/seller/:sellerId" element={<SellerCardScreenView />} />
+          <Route path="/map" element={<MapSurface />} />
         </Routes>
       ) : (
         <Page>
