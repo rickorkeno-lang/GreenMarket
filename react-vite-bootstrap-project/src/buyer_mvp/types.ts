@@ -43,12 +43,16 @@ export interface SellerOffer {
   stock: string;
   description: string | null;
   photos: string[];
+  origin_country: string | null;
+  supply_date: string | null; // "ГГГГ-ММ-ДД"
 }
 
 export interface ProductDetail {
   id: number;
   name: string;
   description: string | null;
+  group_id: number;
+  group_name: string;
   offers: SellerOffer[];
 }
 

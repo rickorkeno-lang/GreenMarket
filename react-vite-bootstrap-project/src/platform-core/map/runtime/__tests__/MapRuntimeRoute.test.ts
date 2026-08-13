@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { asSellerId } from "../../../contracts/Action";
+import { asMarketId, asSellerId } from "../../../contracts/Action";
 import { asCategoryId, type CategoryId } from "../../../contracts/DomainTypes";
 import type { RouteModel, SellerMapRecord } from "../../viewmodels/MapViewModel";
 import { MapRuntime } from "../MapRuntime";
@@ -39,6 +39,10 @@ function route(distanceMeters = 1895): RouteModel {
   };
 }
 
+const TARGET_1 = { kind: "seller" as const, sellerId: asSellerId("seller-1") };
+const TARGET_2 = { kind: "seller" as const, sellerId: asSellerId("seller-2") };
+const TARGET_3 = { kind: "seller" as const, sellerId: asSellerId("seller-3") };
+
 async function run() {
   const veg = asCategoryId("vegetables");
   const dairy = asCategoryId("dairy");
@@ -65,35 +69,35 @@ async function run() {
   assert.deepEqual(MapRuntime.getState().route, { status: "idle" }, "SELECT_SELLER не меняет маршрут");
 
   // ROUTE_REQUEST → loading.
-  MapRuntime.dispatch({ type: "ROUTE_REQUEST", sellerId: asSellerId("seller-1") });
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
   assert.deepEqual(
     MapRuntime.getState().route,
-    { status: "loading", sellerId: asSellerId("seller-1") },
+    { status: "loading", target: TARGET_1 },
     "ROUTE_REQUEST переводит в loading",
   );
 
   // ROUTE_LOADED → success с моделью. Маршрут не привязан к выбранному
   // продавцу: последнее действие применяется (порядок гарантирует seq в
   // requestRoute/fetchRoute, а не reducer).
-  MapRuntime.dispatch({ type: "ROUTE_LOADED", sellerId: asSellerId("seller-1"), route: route() });
+  MapRuntime.dispatch({ type: "ROUTE_LOADED", target: TARGET_1, route: route() });
   assert.deepEqual(
     MapRuntime.getState().route,
-    { status: "success", sellerId: asSellerId("seller-1"), route: route() },
+    { status: "success", target: TARGET_1, route: route() },
     "ROUTE_LOADED строит success-маршрут",
   );
 
-  // Поздний ответ для ДРУГОГО продавца тоже применяется — при вызове через
+  // Поздний ответ для ДРУГОЙ цели тоже применяется — при вызове через
   // requestRoute от устаревшего ответа защищает seq (проверяется на уровне
   // методов с сетью), reducer же просто применяет последнее действие.
   MapRuntime.dispatch({
     type: "ROUTE_LOADED",
-    sellerId: asSellerId("seller-2"),
+    target: TARGET_2,
     route: route(9999),
   });
   const afterOther = MapRuntime.getState().route;
   assert.equal(afterOther.status, "success", "последний ROUTE_LOADED применяется");
   if (afterOther.status === "success") {
-    assert.equal(afterOther.sellerId, asSellerId("seller-2"), "маршрут перезаписан последним ответом");
+    assert.equal(afterOther.target, TARGET_2, "маршрут перезаписан последним ответом");
   }
 
   // ROUTE_CLEARED → idle (пользователь убрал маршрут кнопкой в углу карты).
@@ -101,12 +105,30 @@ async function run() {
   assert.equal(MapRuntime.getState().route.status, "idle", "ROUTE_CLEARED возвращает в idle");
 
   // ROUTE_FAILED → error с причиной.
-  MapRuntime.dispatch({ type: "ROUTE_REQUEST", sellerId: asSellerId("seller-1") });
-  MapRuntime.dispatch({ type: "ROUTE_FAILED", sellerId: asSellerId("seller-1"), kind: "no-route" });
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
+  MapRuntime.dispatch({ type: "ROUTE_FAILED", target: TARGET_1, kind: "no-route" });
   assert.deepEqual(
     MapRuntime.getState().route,
-    { status: "error", sellerId: asSellerId("seller-1"), kind: "no-route" },
+    { status: "error", target: TARGET_1, kind: "no-route" },
     "ROUTE_FAILED переводит в error",
+  );
+
+  // Точка старта (геолокация) недоступна: маршрут НЕ строится (нет фолбэка на
+  // центр карты) — error с kind no-permission/unavailable, экран по нему
+  // показывает ту же ошибку геолокации, что у кнопок «Моё местоположение».
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
+  MapRuntime.dispatch({ type: "ROUTE_FAILED", target: TARGET_1, kind: "no-permission" });
+  assert.deepEqual(
+    MapRuntime.getState().route,
+    { status: "error", target: TARGET_1, kind: "no-permission" },
+    "ROUTE_FAILED (no-permission) переводит в error",
+  );
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
+  MapRuntime.dispatch({ type: "ROUTE_FAILED", target: TARGET_1, kind: "unavailable" });
+  assert.deepEqual(
+    MapRuntime.getState().route,
+    { status: "error", target: TARGET_1, kind: "unavailable" },
+    "ROUTE_FAILED (unavailable) переводит в error",
   );
 
   // Смена выбора продавца маршрут НЕ сбрасывает — полилиния живёт на карте,
@@ -116,17 +138,17 @@ async function run() {
 
   // UNSELECT_SELLER: закрытие карточки маршрут НЕ трогает.
   MapRuntime.dispatch({ type: "SELECT_SELLER", sellerId: asSellerId("seller-1") });
-  MapRuntime.dispatch({ type: "ROUTE_REQUEST", sellerId: asSellerId("seller-1") });
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
   MapRuntime.dispatch({ type: "UNSELECT_SELLER" });
   assert.equal(MapRuntime.getState().route.status, "loading", "UNSELECT_SELLER сохраняет маршрут");
 
   // Открытие мастера «Поиск продавцов» (все шаги) и истории выбор сбрасывают,
   // но маршрут сохраняют.
-  MapRuntime.dispatch({ type: "ROUTE_REQUEST", sellerId: asSellerId("seller-1") });
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
   MapRuntime.dispatch({ type: "SELLER_SEARCH_OPEN" });
   assert.equal(MapRuntime.getState().route.status, "loading", "SELLER_SEARCH_OPEN сохраняет маршрут");
 
-  MapRuntime.dispatch({ type: "ROUTE_REQUEST", sellerId: asSellerId("seller-1") });
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
   MapRuntime.dispatch({
     type: "SELLER_SEARCH_ORIGIN_PICKED",
     origin: { lat: 50.1, lng: 8.6 },
@@ -134,17 +156,17 @@ async function run() {
   });
   assert.equal(MapRuntime.getState().route.status, "loading", "SELLER_SEARCH_ORIGIN_PICKED сохраняет маршрут");
 
-  MapRuntime.dispatch({ type: "ROUTE_REQUEST", sellerId: asSellerId("seller-1") });
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
   MapRuntime.dispatch({ type: "SELLER_SEARCH_BACK" });
   assert.equal(MapRuntime.getState().route.status, "loading", "SELLER_SEARCH_BACK сохраняет маршрут");
 
-  MapRuntime.dispatch({ type: "ROUTE_REQUEST", sellerId: asSellerId("seller-1") });
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
   MapRuntime.dispatch({ type: "SELLER_HISTORY_OPENED", history: [] });
   assert.equal(MapRuntime.getState().route.status, "loading", "SELLER_HISTORY_OPENED сохраняет маршрут");
 
   // Продавец выпал из видимого списка (фильтр) → выбор снят автоматически,
   // но маршрут сохраняется (withVisibleSellers).
-  MapRuntime.dispatch({ type: "ROUTE_REQUEST", sellerId: asSellerId("seller-3") });
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_3 });
   MapRuntime.dispatch({ type: "SET_FILTER_OPTIONS", groupId: "category", optionIds: [veg] });
   const filtered = MapRuntime.getState();
   assert.equal(filtered.selectedSellerId, null, "продавец вне фильтра снят с выбора");
@@ -165,6 +187,54 @@ async function run() {
   loc = MapRuntime.getState();
   assert.deepEqual(loc.userLocation, { lat: 50.0, lng: 8.55 }, "CENTER_ON_USER_SUCCESS сохраняет позицию");
   assert.deepEqual(loc.mapCenter, { lat: 50.0, lng: 8.55 }, "CENTER_ON_USER_SUCCESS центрирует камеру");
+
+  // ==== Маршрут до ТОЧКИ ТОРГОВЛИ (задача «Маркеты») ====
+  // Маршрут строится и до точки: target { kind: "market" } ведёт себя в reducer
+  // так же, как seller — целей несколько, привязки к выбору нет.
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: { kind: "market", marketId: asMarketId("market-1") } });
+  MapRuntime.dispatch({
+    type: "ROUTE_LOADED",
+    target: { kind: "market", marketId: asMarketId("market-1") },
+    route: route(2500),
+  });
+  const marketRoute = MapRuntime.getState().route;
+  assert.equal(marketRoute.status, "success", "маршрут до точки строится как обычно");
+  if (marketRoute.status === "success") {
+    assert.equal(marketRoute.target.kind, "market", "цель маршрута — точка торговли");
+    assert.equal(marketRoute.target.marketId, asMarketId("market-1"), "target хранит marketId");
+  }
+
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: { kind: "market", marketId: asMarketId("market-1") } });
+  MapRuntime.dispatch({
+    type: "ROUTE_FAILED",
+    target: { kind: "market", marketId: asMarketId("market-1") },
+    kind: "no-route",
+  });
+  assert.deepEqual(
+    MapRuntime.getState().route,
+    { status: "error", target: { kind: "market", marketId: asMarketId("market-1") }, kind: "no-route" },
+    "маршрут до точки падает с той же причиной",
+  );
+
+  // ==== ROUTE_REQUEST закрывает окно, из которого маршрут запущен ====
+  // Попап точки: «Построить маршрут» в попапе закрывает его сразу, чтобы карта
+  // показывала маршрут, а не окно (раньше попап висел до ухода камеры).
+  MapRuntime.dispatch({ type: "SELECT_MARKET", marketId: asMarketId("market-1") });
+  assert.equal(MapRuntime.getState().bottomSheet, "marketSellers", "попап точки открыт");
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: { kind: "market", marketId: asMarketId("market-1") } });
+  let afterMarketRequest = MapRuntime.getState();
+  assert.equal(afterMarketRequest.bottomSheet, "hidden", "ROUTE_REQUEST закрывает попап точки");
+  assert.equal(afterMarketRequest.selectedMarketId, null, "выбор точки снят");
+  assert.equal(afterMarketRequest.marketSellers, null, "список продавцов точки сброшен");
+
+  // Карточка продавца: страховка — если маршрут запрошен с открытой карточкой,
+  // она тоже закрывается (штатно её закрывает MapProjection по ROUTE_STARTED).
+  MapRuntime.dispatch({ type: "SELECT_SELLER", sellerId: asSellerId("seller-1") });
+  assert.equal(MapRuntime.getState().bottomSheet, "sellerSummary", "карточка продавца открыта");
+  MapRuntime.dispatch({ type: "ROUTE_REQUEST", target: TARGET_1 });
+  afterMarketRequest = MapRuntime.getState();
+  assert.equal(afterMarketRequest.bottomSheet, "hidden", "ROUTE_REQUEST закрывает карточку продавца");
+  assert.equal(afterMarketRequest.selectedSellerId, null, "выбор продавца снят");
 
   console.log("MapRuntime (маршрут): все проверки пройдены");
 }

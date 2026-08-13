@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { asSellerId } from "../../../contracts/Action";
+import { asMarketId, asSellerId } from "../../../contracts/Action";
 import {
   buildClusterMarkerHtml,
+  buildMarketMarkerHtml,
   buildSellerMarkerHtml,
   CLUSTER_ICON_ANCHOR,
   CLUSTER_ICON_SIZE,
@@ -9,6 +10,9 @@ import {
   dotSizeForState,
   escapeHtml,
   glowScale,
+  MARKET_ICON_ANCHOR,
+  MARKET_ICON_SIZE,
+  marketIconMetrics,
   sellerIconMetrics,
   sellerMarkerState,
 } from "../MarkerStyle";
@@ -104,6 +108,33 @@ function run() {
   // контейнера 38px → центр на 8px от низа = 30px от верха) ----
   assert.deepEqual(CLUSTER_ICON_SIZE, [30, 38], "контейнер кластера");
   assert.deepEqual(CLUSTER_ICON_ANCHOR, [15, 30], "якорь кластера — центр точки, у координаты");
+
+  // ---- Маркер точки торговли (задача «Маркеты») ----
+  // Метрики: габаритный бокс булавки (34px × √2 ≈ 48px), якорь — остриё [24,48].
+  const marketMetrics = marketIconMetrics();
+  assert.deepEqual(marketMetrics.size, [48, 48], "контейнер маркера точки = 48×48");
+  assert.deepEqual(marketMetrics.anchor, [24, 48], "якорь — остриё булавки, точка контакта с координатой");
+  assert.deepEqual(MARKET_ICON_SIZE, [48, 48], "MARKET_ICON_SIZE = 48×48");
+  assert.deepEqual(MARKET_ICON_ANCHOR, [24, 48], "MARKET_ICON_ANCHOR = [24, 48]");
+
+  // Разметка: подпись + булавка со счётчиком; data-testid/data-market-id.
+  const marketHtml = buildMarketMarkerHtml("Центральный рынок", asMarketId("market-1"), 45, false);
+  assert.ok(marketHtml.includes('class="gm-map-market__label"'), "подпись маркета без модификатора");
+  assert.ok(marketHtml.includes('data-testid="market-marker"'), "data-testid маркера точки");
+  assert.ok(marketHtml.includes('data-market-id="market-1"'), "data-market-id сохранён");
+  assert.ok(marketHtml.includes('class="gm-map-market__pin"'), "булавка с базовым классом");
+  assert.ok(!marketHtml.includes("gm-map-market__pin--selected"), "невыбранная точка без модификатора");
+  assert.ok(marketHtml.includes(">45<"), "счётчик продавцов в булавке");
+  assert.ok(marketHtml.includes('title="Центральный рынок"'), "title для тултипа/доступности");
+
+  const selectedMarketHtml = buildMarketMarkerHtml("Лавка", asMarketId("market-2"), 3, true);
+  assert.ok(selectedMarketHtml.includes("gm-map-market__pin--selected"), "выбранная точка — модификатор булавки");
+
+  // Экранирование имени/ID точки — как у продавцов (название из API может
+  // содержать любые символы, разметка подставляется в innerHTML).
+  const evilMarket = buildMarketMarkerHtml("<script>alert(\"x\")</script>", asMarketId("m&1"), 1, false);
+  assert.ok(!evilMarket.includes("<script>"), "имя точки экранировано (нет сырого <script>)");
+  assert.ok(evilMarket.includes("&lt;script&gt;"), "экранированное имя присутствует");
 
   console.log("MarkerStyle: все проверки пройдены");
 }

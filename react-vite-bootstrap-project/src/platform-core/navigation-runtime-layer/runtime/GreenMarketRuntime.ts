@@ -68,13 +68,26 @@ export interface GreenMarketRuntime {
   /** Как forceNavigate, но сбрасывает стек ровно в один экран вместо push —
    *  для прямого входа по ссылке (deep-link), когда у пользователя ещё нет
    *  хронологии переходов. Стек обязан отражать реальные действия
-   *  пользователя: если пользователь сразу попал на /seller-list или
-   *  /seller/:id, под ним не должно быть синтетического корневого Catalog,
-   *  иначе BACK "отмотал" бы то, чего пользователь не делал (см.
-   *  SellerListScreenView — кнопка «назад» прячется, когда isAtRoot). */
+   *  пользователя: если пользователь сразу попал на /catalog или /map,
+   *  под ним не должно быть синтетического корневого экрана, иначе BACK
+   *  "отмотал" бы то, чего пользователь не делал. В ТЗ-024 deep-link на
+   *  продавца/список нет (это контент панели поверх карты, без URL). */
   forceReset(entry: NavigationEntry): void;
   subscribe(listener: (state: RuntimeState) => void): () => void;
   onBusinessEvent(listener: (event: BusinessEvent) => void): () => void;
+}
+
+/** Вернуться к карте-поверхности (ТЗ-024 §10: карта — корневая поверхность
+ *  вне стека, экрана «Map» в стеке нет). Усекает стек до Main — контент
+ *  панели (SellerCard/SellerList/ProductCard) закрывается, карта уже
+ *  смонтирована за ним; если Main в стеке нет (контент открыт без карты,
+ *  например карточка с каталога) — открывает Main поверх (push, как раньше
+ *  OPEN_MAP пушил Map). Это навигационный эффект START_ROUTE (MAP-020) и
+ *  OPEN_MAP. */
+function navigateToMapSurface(nav: NavigationState): NavigationState {
+  const index = nav.stack.findIndex((entry) => entry.screen === "Main");
+  if (index !== -1) return { ...nav, stack: nav.stack.slice(0, index + 1) };
+  return push(nav, { screen: "Main", params: {} });
 }
 
 /** Навигационные эффекты Action Catalog — целиком декларативны: Action →
@@ -98,13 +111,15 @@ function applyNavigation(nav: NavigationState, action: Action): NavigationState 
       return push(nav, { screen: "SellerCatalog", params: { sellerId: action.payload.sellerId, categoryId: action.payload.categoryId } });
     case "START_PURCHASE":
       return push(nav, { screen: "Basket", params: {} });
-    /* AR-003: Map — обычный экран (push/pop через общий стек), НЕ смена
-     * корня (reset). SELECT_SELLER/UNSELECT_SELLER/MAP_LOADED/MOVE_MAP/
-     * ZOOM_MAP/CENTER_ON_USER не меняют навигационный стек — это состояние
-     * самого экрана Map (see map/viewmodels/MapViewModel.ts), они лишь
-     * проходят через ActionHandlers как бизнес-события (default ниже). */
+    /* ТЗ-025 v1.1 / ТЗ-024: «Маршрут» на карточке продавца ведёт на карту —
+     * сама карточка картой не управляет (маршрут строит MapProjection по
+     * BusinessEvent ROUTE_STARTED), а навигационный эффект задан самим
+     * Action'ом. Карта — корневая поверхность вне стека: START_ROUTE просто
+     * возвращает Bottom Sheet к Main (карта уже смонтирована за панелью),
+     * а если Main в стеке нет — открывает его поверх. */
+    case "START_ROUTE":
     case "OPEN_MAP":
-      return push(nav, { screen: "Map", params: {} });
+      return navigateToMapSurface(nav);
     case "OPEN_SELLER_LIST":
       return push(nav, { screen: "SellerList", params: {} });
     case "OPEN_CATALOG":

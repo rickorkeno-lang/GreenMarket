@@ -8,9 +8,14 @@ import type { CategoryId } from "./DomainTypes";
 export type SellerId = string & { readonly __brand: "SellerId" };
 export type ProductId = string & { readonly __brand: "ProductId" };
 export type OptionId = string & { readonly __brand: "OptionId" };
+/** Идентификатор точки торговли (рынок/лавка) — «market-N». Отдельный brand от
+ *  SellerId: маркет — это место, к которому привязаны продавцы (см. задачу
+ *  «Маркеты», GET /api/v1/catalog/markets), а не сам продавец. */
+export type MarketId = string & { readonly __brand: "MarketId" };
 export const asSellerId = (id: string): SellerId => id as SellerId;
 export const asProductId = (id: string): ProductId => id as ProductId;
 export const asOptionId = (id: string): OptionId => id as OptionId;
+export const asMarketId = (id: string): MarketId => id as MarketId;
 
 export type SheetHeight = "Hidden" | "Collapsed" | "Half" | "Expanded";
 
@@ -33,7 +38,7 @@ export type Action =
   | { type: "OPEN_PRODUCT"; payload: { sellerId: SellerId; productId: ProductId } }
   | { type: "ADD_PRODUCT"; payload: { sellerId: SellerId; productId: ProductId } }
   | { type: "REPLACE_PRODUCT"; payload: { sellerId: SellerId; productId: ProductId } }
-  | { type: "START_ROUTE" }
+  | { type: "START_ROUTE"; payload: { sellerId: SellerId } }
   | { type: "TOGGLE_FAVORITE_SELLER"; payload: { sellerId: SellerId } }
   | { type: "BACK" }
   | { type: "GO_TO_MAIN" }
@@ -81,10 +86,21 @@ export type Action =
   | { type: "SEARCH_ORIGIN_MY_LOCATION" }
   | { type: "SEARCH_ORIGIN_MAP_CENTER" }
   /* --------------------------------------------------------------------
-   * Маршрут до продавца на карте (MAP-020) НЕ является ContentBlock-действием:
-   * кнопок маршрута в карточке продавца нет (см. MapSheetAdapter), а
-   * построение/удаление маршрута живёт в MapRuntime — «Маршрут» на странице
-   * продавца вызывает MapRuntime#requestRoute, «Убрать маршрут» в углу карты —
+   * Маркеты (задача «Маркеты», GET /api/v1/catalog/markets): действия попапа
+   * точки торговли в Bottom Sheet карты. START_MARKET_ROUTE — «Построить
+   * маршрут» до точки (MapRuntime#requestRoute с target { kind: "market" }),
+   * RETRY_MARKET_SELLERS — «Повторить» при ошибке загрузки продавцов точки.
+   * Оба обрабатываются экраном Map (MapScreenView.handleBlockAction), как
+   * SEARCH_ORIGIN_*: глобальный Runtime про них не знает (навигации нет).
+   * -------------------------------------------------------------------- */
+  | { type: "START_MARKET_ROUTE"; payload: { marketId: MarketId } }
+  | { type: "RETRY_MARKET_SELLERS"; payload: { marketId: MarketId } }
+  /* --------------------------------------------------------------------
+   * Маршрут до продавца на карте (MAP-020). «Маршрут» на странице продавца
+   * диспатчит START_ROUTE { sellerId } (ТЗ-025: карточка не управляет картой
+   * напрямую — Action → ActionHandlers → BusinessEvent ROUTE_STARTED →
+   * MapProjection → MapRuntime#requestRoute; навигационный эффект «на карту»
+   * в GreenMarketRuntime#applyNavigation). «Убрать маршрут» в углу карты —
    * MapRuntime#clearRoute. */
   ;
 

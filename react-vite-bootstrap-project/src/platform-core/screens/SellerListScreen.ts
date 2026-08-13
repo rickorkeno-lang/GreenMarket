@@ -4,19 +4,23 @@ import type { ContentBlock } from "@/platform-core/contracts/ContentBlock";
 
 /** Экран «Список продавцов» (переход Map → Seller List, AR-003).
  *
- *  Сам экран реализован как React-компонент (src/screens/seller-list/
- *  SellerListScreenView.tsx) по той же схеме, что MapScreenView: доменный
- *  слой берёт данные из SellerRepository.getAllSellers(), а навигационные
- *  действия проходят через общий GreenMarketRuntime — именно поэтому здесь
- *  важен список availableActions (его читает isActionAllowed в Runtime):
- *   - OPEN_MAP / BACK — «показать продавца на карте» (вариант Б): список
- *     возвращает пользователя на карту, центрирует её и подсвечивает
- *     продавца; если карты в стеке нет (прямой вход по ссылке), вместо
- *     BACK пушится свежая Map через OPEN_MAP;
+ *  ТЗ-024 §10: список — контент Bottom Sheet ПОВЕРХ карты-поверхности, а не
+ *  страница: реализован как React-компонент (src/screens/seller-list/
+ *  SellerListScreenView.tsx), который MapSurface монтирует оверлеем над
+ *  MapScreenView по той же схеме: доменный слой берёт данные из
+ *  SellerRepository.getAllSellers(), а навигационные действия проходят через
+ *  общий GreenMarketRuntime — именно поэтому здесь важен список
+ *  availableActions (его читает isActionAllowed в Runtime):
+ *   - BACK — «показать продавца на карте»: карта уже смонтирована за
+ *     панелью (Main ниже в стеке), выбор продавца просто закрывает список
+ *     и возвращает к «Главному экрану» карты;
+ *   - OPEN_MAP — допускается как общее «на карту» (navigateToMapSurface:
+ *     усекает стек до Main — эффект тот же, что у BACK);
  *   - CLOSE_SCREEN — общее для всех экранов закрытие (pop).
  *
  *  Builder остаётся заглушкой: у списка нет Bottom Sheet / ContentBlock-ов,
- *  он рендерится как самостоятельный экран, а не через общий рендерер. */
+ *  он рендерится как самостоятельный контент панели, а не через общий
+ *  рендерер. */
 export interface SellerListViewModel {
   placeholder: true;
 }

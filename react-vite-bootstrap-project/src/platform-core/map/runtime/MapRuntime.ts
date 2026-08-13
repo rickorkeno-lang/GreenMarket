@@ -1,12 +1,15 @@
-import type { SellerId } from "@/platform-core/contracts/Action";
+import type { MarketId, SellerId } from "@/platform-core/contracts/Action";
 import type {
   BottomSheetState,
   GeoPoint,
   MapBounds,
+  MarketMapRecord,
+  MarketSellerRecord,
   ProductSearchState,
   RouteFailureKind,
   RouteModel,
   RouteState,
+  RouteTarget,
   SearchSuggestionsState,
   SellerMapRecord,
   SellerSearchState,
@@ -109,6 +112,23 @@ export interface MapRuntimeState {
    *  не фильтрует (в категориях это «Все»). */
   selectedFilters: SellerFiltersState;
   selectedSellerId: SellerId | null;
+  /** Точки торговли в видимой области (задача «Маркеты»): пины рынков/лавок,
+   *  отдельный слой от продавцов. Грузятся параллельно с продавцами из
+   *  onVisibleBoundsChange (requestVisibleMarkets внутри requestVisibleSellers). */
+  markets: MarketMapRecord[];
+  marketsLoading: boolean;
+  /** Упал ли последний запрос точек торговли (MARKETS_LOAD_FAILED). Пустой
+   *  список без ошибки — «в области точек нет», ошибка — «сеть/бэкенд упали»
+   *  (это разные состояния: ошибка подсвечивается карте через marketsError). */
+  marketsError: boolean;
+  /** Выбранная точка торговли (открыт её попап — bottomSheet = marketSellers). */
+  selectedMarketId: MarketId | null;
+  /** Продавцы выбранной точки; null — список ещё не запрашивался/закрыт. */
+  marketSellers: MarketSellerRecord[] | null;
+  /** Точка, чьи продавцы сейчас в попапе (guard для поздних ответов). */
+  marketSellersMarketId: MarketId | null;
+  marketSellersLoading: boolean;
+  marketSellersFailed: boolean;
   bottomSheet: BottomSheetState;
   /** Маршрут до выбранного продавца (MAP-020): состояние запроса (idle/loading/
    *  success/error) и сам маршрут (полилиния + расстояние/время). Запрашивается
@@ -162,21 +182,43 @@ export type MapRuntimeAction =
    * без отдельной ветки под "уже выбран этот же". */
   | { type: "SELECT_SELLER"; sellerId: SellerId }
   | { type: "UNSELECT_SELLER" }
+  /* ======== Точки торговли — рынки/лавки (задача «Маркеты») ========
+   *  MARKETS_LOADING/LOADED/LOAD_FAILED — запрос пинов точек видимой области
+   *    (инициируется тем же onVisibleBoundsChange, что и продавцы).
+   *  SELECT_MARKET { marketId } — выбран пин точки: открывается её попап
+   *    (bottomSheet = marketSellers), список продавцов запрашивает
+   *    loadMarketSellers. Выбор точки сбрасывает выбор продавца (в один
+   *    момент открыт один попап).
+   *  UNSELECT_MARKET — попап закрыт (кнопка ✕ / клик по фону карты).
+   *  MARKET_SELLERS_LOADING { marketId } / _LOADED { marketId, sellers } /
+   *    _FAILED { marketId } — загрузка списка продавцов точки. LOADED/FAILED
+   *    применяются только если marketId всё ещё выбран (поздний ответ
+   *    устаревшего запроса не попадает в новый попап).
+   *  ------------------------------------------------------------------- */
+  | { type: "MARKETS_LOADING" }
+  | { type: "MARKETS_LOADED"; markets: MarketMapRecord[] }
+  | { type: "MARKETS_LOAD_FAILED" }
+  | { type: "SELECT_MARKET"; marketId: MarketId }
+  | { type: "UNSELECT_MARKET" }
+  | { type: "MARKET_SELLERS_LOADING"; marketId: MarketId }
+  | { type: "MARKET_SELLERS_LOADED"; marketId: MarketId; sellers: MarketSellerRecord[] }
+  | { type: "MARKET_SELLERS_FAILED"; marketId: MarketId }
   | { type: "SEARCH_RESULT"; sellers: SellerMapRecord[] }
   | { type: "SEARCH_CLEARED" }
-  /* ======== Маршрут до продавца (MAP-020) ========
-   *  ROUTE_REQUEST { sellerId } — начат запрос маршрута (loading). Автоматически
-   *    диспатчится при выборе продавца (SELECT_SELLER) и кнопкой «Маршрут».
-   *  ROUTE_LOADED { sellerId, route } — маршрут построен; применяется только
-   *    если sellerId всё ещё выбран (поздний ответ устаревшего запроса не
-   *    рисуется поверх другого продавца).
-   *  ROUTE_FAILED { sellerId, kind } — маршрут не построен (no-route/network);
-   *    тот же guard по sellerId.
+  /* ======== Маршрут до цели (MAP-020 + задача «Маркеты») ========
+   *  ROUTE_REQUEST { target } — начат запрос маршрута (loading). Автоматически
+   *    диспатчится при выборе продавца (SELECT_SELLER), кнопкой «Маршрут» на
+   *    странице продавца (target = seller) и кнопкой «Построить маршрут» в
+   *    попапе точки торговли (target = market).
+   *  ROUTE_LOADED { target, route } — маршрут построен; применяется всегда,
+   *    от устаревшего запроса защищает seq в requestRoute/fetchRoute.
+   *  ROUTE_FAILED { target, kind } — маршрут не построен (no-route/network —
+   *    ошибка провайдера, no-permission/unavailable — точка старта недоступна).
    *  ROUTE_CLEARED — пользователь убрал маршрут с карты (idle).
    *  ------------------------------------------------------------------- */
-  | { type: "ROUTE_REQUEST"; sellerId: SellerId }
-  | { type: "ROUTE_LOADED"; sellerId: SellerId; route: RouteModel }
-  | { type: "ROUTE_FAILED"; sellerId: SellerId; kind: RouteFailureKind }
+  | { type: "ROUTE_REQUEST"; target: RouteTarget }
+  | { type: "ROUTE_LOADED"; target: RouteTarget; route: RouteModel }
+  | { type: "ROUTE_FAILED"; target: RouteTarget; kind: RouteFailureKind }
   | { type: "ROUTE_CLEARED" }
   /* ======== Action'ы мастера «Поиск продавцов» (MAP-053/MAP-018) ========
    *  SELLER_SEARCH_OPEN — открыть мастер (экран выбора точки).
@@ -307,6 +349,14 @@ const initialState: MapRuntimeState = {
   categories: [],
   selectedFilters: {},
   selectedSellerId: null,
+  markets: [],
+  marketsLoading: false,
+  marketsError: false,
+  selectedMarketId: null,
+  marketSellers: null,
+  marketSellersMarketId: null,
+  marketSellersLoading: false,
+  marketSellersFailed: false,
   bottomSheet: "hidden",
   route: { status: "idle" },
   mapCenter: defaultMapConfig.defaultCenter,
@@ -414,6 +464,20 @@ function withSearchSuggestions(state: MapRuntimeState): MapRuntimeState {
   };
 }
 
+/** Сбрасывает состояние попапа точки торговли (выбор и список продавцов).
+ *  bottomSheet намеренно не трогается — закрытие попапа обрабатывает каждый
+ *  case явно (на сброс выбора продавца попап маркета не влияет). */
+function withoutMarketPopup(state: MapRuntimeState): MapRuntimeState {
+  return {
+    ...state,
+    selectedMarketId: null,
+    marketSellers: null,
+    marketSellersMarketId: null,
+    marketSellersLoading: false,
+    marketSellersFailed: false,
+  };
+}
+
 /** Убирает из selectedFilters опции, которых больше нет в конфиге фильтра
  *  (например, выбранная категория исчезла из каталога после CATEGORIES_LOADED).
  *  Возвращает исходный объект, если менять нечего — чтобы не плодить новые
@@ -483,9 +547,10 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
       // sellerSearch сохраняется: карточка продавца из результатов поиска
       // может подтягивать данные, даже если продавец вне видимой области.
       // Маршрут (MAP-020) выбором не трогается: полилиния строится на странице
-      // продавца и переживает смену выбора/закрытие карточки.
+      // продавца и переживает смену выбора/закрытие карточки. Попап точки
+      // торговли (задача «Маркеты») выбором продавца закрывается.
       return {
-        ...state,
+        ...withoutMarketPopup(state),
         selectedSellerId: action.sellerId,
         bottomSheet: "sellerSummary",
       };
@@ -499,21 +564,103 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
         bottomSheet: "hidden",
         sellerSearch: initialState.sellerSearch,
       };
+    case "MARKETS_LOADING":
+      return { ...state, marketsLoading: true, marketsError: false };
+    case "MARKETS_LOADED": {
+      // Точки обновились (новая видимая область). Если выбранная точка всё
+      // ещё в списке — попап сохраняется; выпала из видимой области — попап
+      // закрывается (список продавцов устарел вместе с областью).
+      const markets = action.markets;
+      const selectedStillPresent =
+        state.selectedMarketId !== null && markets.some((m) => m.marketId === state.selectedMarketId);
+      if (!selectedStillPresent && state.selectedMarketId !== null) {
+        return withoutMarketPopup({
+          ...state,
+          markets,
+          marketsLoading: false,
+          marketsError: false,
+          bottomSheet: state.bottomSheet === "marketSellers" ? "hidden" : state.bottomSheet,
+        });
+      }
+      return { ...state, markets, marketsLoading: false, marketsError: false };
+    }
+    case "MARKETS_LOAD_FAILED":
+      return { ...state, marketsLoading: false, marketsError: true };
+    case "SELECT_MARKET":
+      // Выбран пин точки: открывается попап (bottomSheet = marketSellers),
+      // список продавцов запрашивает loadMarketSellers. Выбор продавца
+      // сбрасывается (в один момент открыт один попап). Маршрут не трогается —
+      // как у продавца (см. SELECT_SELLER).
+      return {
+        ...state,
+        selectedSellerId: null,
+        selectedMarketId: action.marketId,
+        marketSellers: null,
+        marketSellersMarketId: action.marketId,
+        marketSellersLoading: false,
+        marketSellersFailed: false,
+        bottomSheet: "marketSellers",
+      };
+    case "UNSELECT_MARKET":
+      // Закрытие попапа точки: сбрасывается выбор и список продавцов.
+      return withoutMarketPopup({ ...state, bottomSheet: "hidden" });
+    case "MARKET_SELLERS_LOADING":
+      // Начало загрузки списка продавцов точки. marketId пишется в state —
+      // LOADED/FAILED применяются только для актуального запроса (guard ниже).
+      return {
+        ...state,
+        marketSellersMarketId: action.marketId,
+        marketSellersLoading: true,
+        marketSellersFailed: false,
+      };
+    case "MARKET_SELLERS_LOADED":
+      // Поздний ответ устаревшего запроса (пользователь уже открыл другой
+      // попап/закрыл) не применяется — иначе список чужой точки попал бы в
+      // текущий попап (тот же guard, что у маршрута по seq, но на уровне
+      // reducer: здесь нет seq, есть актуальный marketSellersMarketId).
+      return state.marketSellersMarketId !== action.marketId
+        ? state
+        : {
+            ...state,
+            marketSellers: action.sellers,
+            marketSellersLoading: false,
+            marketSellersFailed: false,
+          };
+    case "MARKET_SELLERS_FAILED":
+      return state.marketSellersMarketId !== action.marketId
+        ? state
+        : { ...state, marketSellersLoading: false, marketSellersFailed: true };
     case "SEARCH_RESULT":
       return { ...state, searchResult: action.sellers };
     case "SEARCH_CLEARED":
       return { ...state, searchResult: null };
-    case "ROUTE_REQUEST":
+    case "ROUTE_REQUEST": {
       // Начало запроса маршрута: показываем loading, полилиния старого маршрута
-      // (status !== success) уже не рисуется.
-      return { ...state, route: { status: "loading", sellerId: action.sellerId } };
+      // (status !== success) уже не рисуется. Окно, из которого маршрут запущен,
+      // закрывается сразу: попап точки (START_MARKET_ROUTE) иначе висел бы до
+      // ухода камеры из области, а карточка продавца уже закрыта MapProjection
+      // (ROUTE_STARTED → UNSELECT_SELLER) — здесь страховка на любой путь.
+      const base: MapRuntimeState = { ...state, route: { status: "loading", target: action.target } };
+      if (state.bottomSheet === "marketSellers") {
+        return withoutMarketPopup({ ...base, bottomSheet: "hidden" });
+      }
+      if (state.bottomSheet === "sellerSummary") {
+        return {
+          ...base,
+          selectedSellerId: null,
+          bottomSheet: "hidden",
+          sellerSearch: initialState.sellerSearch,
+        };
+      }
+      return base;
+    }
     case "ROUTE_LOADED":
-      // Маршрут не привязан к выбору продавца (строится на странице продавца),
-      // поэтому ответ применяется всегда; от устаревшего запроса защищает seq
-      // в requestRoute/fetchRoute (запрос старше последнего не применяется).
-      return { ...state, route: { status: "success", sellerId: action.sellerId, route: action.route } };
+      // Маршрут не привязан к выбору продавца/точки (строится на странице
+      // продавца и в попапе точки), поэтому ответ применяется всегда; от
+      // устаревшего запроса защищает seq в requestRoute/fetchRoute.
+      return { ...state, route: { status: "success", target: action.target, route: action.route } };
     case "ROUTE_FAILED":
-      return { ...state, route: { status: "error", sellerId: action.sellerId, kind: action.kind } };
+      return { ...state, route: { status: "error", target: action.target, kind: action.kind } };
     case "ROUTE_CLEARED":
       return { ...state, route: { status: "idle" } };
     case "SELLER_SEARCH_OPEN":
@@ -729,21 +876,46 @@ function diagnosticsFor(action: MapRuntimeAction, nextState: MapRuntimeState): v
     case "UNSELECT_SELLER":
       Diagnostics.track("map.bottom_sheet_closed");
       return;
+    case "SELECT_MARKET":
+      Diagnostics.track("map.market_selected", { marketId: action.marketId });
+      Diagnostics.track("map.market_sellers_sheet_opened", { marketId: action.marketId });
+      return;
+    case "UNSELECT_MARKET":
+      Diagnostics.track("map.market_sellers_sheet_closed");
+      return;
+    case "MARKETS_LOADED":
+      Diagnostics.track("map.markets_loaded", { marketCount: action.markets.length });
+      return;
+    case "MARKETS_LOAD_FAILED":
+      Diagnostics.track("map.markets_load_failed");
+      return;
+    case "MARKET_SELLERS_LOADED":
+      Diagnostics.track("map.market_sellers_loaded", {
+        marketId: action.marketId,
+        sellerCount: action.sellers.length,
+      });
+      return;
+    case "MARKET_SELLERS_FAILED":
+      Diagnostics.track("map.market_sellers_failed", { marketId: action.marketId });
+      return;
     case "SEARCH_RESULT":
       Diagnostics.track("map.search_performed", { resultCount: action.sellers.length });
       return;
     case "ROUTE_REQUEST":
-      Diagnostics.track("map.route_requested", { sellerId: action.sellerId });
+      Diagnostics.track("map.route_requested", {
+        target: action.target.kind,
+        id: action.target.kind === "seller" ? action.target.sellerId : action.target.marketId,
+      });
       return;
     case "ROUTE_LOADED":
       Diagnostics.track("map.route_loaded", {
-        sellerId: action.sellerId,
+        target: action.target.kind,
         distanceMeters: Math.round(action.route.distanceMeters),
         durationSeconds: Math.round(action.route.durationSeconds),
       });
       return;
     case "ROUTE_FAILED":
-      Diagnostics.track("map.route_failed", { sellerId: action.sellerId, kind: action.kind });
+      Diagnostics.track("map.route_failed", { target: action.target.kind, kind: action.kind });
       return;
     case "ROUTE_CLEARED":
       Diagnostics.track("map.route_cleared");
@@ -824,6 +996,8 @@ function createMapRuntime() {
   let visibleSellersTimer: ReturnType<typeof setTimeout> | null = null;
   let visibleSellersSeq = 0;
   let lastRequestedBounds: MapBounds | null = null;
+  let visibleMarketsSeq = 0;
+  let marketSellersSeq = 0;
   let areaLabelTimer: ReturnType<typeof setTimeout> | null = null;
   let areaLabelSeq = 0;
   let sellerSearchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -848,19 +1022,73 @@ function createMapRuntime() {
       });
   }
 
+  /** Фактическая загрузка точек торговли (задача «Маркеты»): как у продавцов —
+   *  запрос Repository по границам и применение ответа только если загрузка
+   *  всё ещё последняя (последнее движение карты — источник правды). */
+  function loadVisibleMarketsNow(bounds: MapBounds): void {
+    const seq = ++visibleMarketsSeq;
+    dispatch({ type: "MARKETS_LOADING" });
+    void sellerRepository.getVisibleMarkets(bounds)
+      .then((markets) => {
+        if (seq === visibleMarketsSeq) dispatch({ type: "MARKETS_LOADED", markets });
+      })
+      .catch(() => {
+        if (seq === visibleMarketsSeq) dispatch({ type: "MARKETS_LOAD_FAILED" });
+      });
+  }
+
   /** Загрузка видимых продавцов с дебаунсом: серия moveend/zoomend схлопывается
-   *  в один запрос, почти не изменившиеся границы не перезапрашиваются. */
+   *  в один запрос, почти не изменившиеся границы не перезапрашиваются. Точки
+   *  торговли грузятся в том же такте (те же границы, один источник события) —
+   *  пины и продавцы обновляются согласованно. */
   function requestVisibleSellers(bounds: MapBounds): void {
     if (lastRequestedBounds && boundsNearlyEqual(lastRequestedBounds, bounds)) return;
     lastRequestedBounds = bounds;
     if (visibleSellersTimer !== null) clearTimeout(visibleSellersTimer);
-    visibleSellersTimer = setTimeout(() => loadVisibleSellersNow(bounds), VISIBLE_SELLERS_DEBOUNCE_MS);
+    visibleSellersTimer = setTimeout(() => {
+      loadVisibleSellersNow(bounds);
+      loadVisibleMarketsNow(bounds);
+    }, VISIBLE_SELLERS_DEBOUNCE_MS);
   }
 
   /** Повторная загрузка видимой области (кнопка «Повторить» в Bottom Sheet):
-   *  обходит дебаунс и дедупликацию — принудительный перезапрос. */
+   *  обходит дебаунс и дедупликацию — принудительный перезапрос продавцов и
+   *  точек торговли. */
   function retryVisibleSellers(): void {
-    if (lastRequestedBounds) loadVisibleSellersNow(lastRequestedBounds);
+    if (lastRequestedBounds) {
+      loadVisibleSellersNow(lastRequestedBounds);
+      loadVisibleMarketsNow(lastRequestedBounds);
+    }
+  }
+
+  /** Загрузка списка продавцов точки (задача «Маркеты»): открывает попап точки
+   *  (SELECT_MARKET) и запрашивает её продавцов. Вызывается при клике на пин
+   *  точки и из MapScreenView.handleBlockAction (перезагрузка по кнопке
+   *  «Повторить»). Несуществующая точка (удалена на бэкенде между запросами)
+   *  даёт пустой список — попап показывает «Здесь пока нет продавцов». */
+  function loadMarketSellers(marketId: MarketId): void {
+    const seq = ++marketSellersSeq;
+    dispatch({ type: "SELECT_MARKET", marketId });
+    dispatch({ type: "MARKET_SELLERS_LOADING", marketId });
+    void sellerRepository.getMarketSellers(marketId)
+      .then((sellers) => {
+        if (seq === marketSellersSeq) dispatch({ type: "MARKET_SELLERS_LOADED", marketId, sellers });
+      })
+      .catch(() => {
+        if (seq === marketSellersSeq) dispatch({ type: "MARKET_SELLERS_FAILED", marketId });
+      });
+  }
+
+  /** Принудительный перезапрос продавцов уже выбранной точки (кнопка
+   *  «Повторить» в попапе): обходит seq-guard, чтобы тот же запрос не отменил
+   *  сам себя. */
+  function retryMarketSellers(): void {
+    const marketId = state.selectedMarketId;
+    if (marketId === null) return;
+    dispatch({ type: "MARKET_SELLERS_LOADING", marketId });
+    void sellerRepository.getMarketSellers(marketId)
+      .then((sellers) => dispatch({ type: "MARKET_SELLERS_LOADED", marketId, sellers }))
+      .catch(() => dispatch({ type: "MARKET_SELLERS_FAILED", marketId }));
   }
 
   /** Обратное геокодирование центра текущего просмотра (GM-UX-001 «Область
@@ -868,6 +1096,10 @@ function createMapRuntime() {
    *  moveend/zoomend (например, при flyTo оба события приходят сразу). */
   function requestAreaLabel(center: GeoPoint): void {
     if (areaLabelTimer !== null) clearTimeout(areaLabelTimer);
+    // Сбрасываем текущую метку, чтобы UI показал состояние «Определяется...»
+    if (state.currentAreaLabel !== null) {
+      dispatch({ type: "AREA_LABEL_UPDATED", label: null });
+    }
     const seq = ++areaLabelSeq;
     areaLabelTimer = setTimeout(() => {
       void GeoService.reverseGeocode(center).then((label) => {
@@ -1044,63 +1276,81 @@ function createMapRuntime() {
   /** Построение маршрута до продавца (MAP-020). Точка старта — текущее
    *  местоположение пользователя. Если оно ещё не определено, оно запрашивается
    *  тихо (без движения камеры) и маршрут строится от него; при отказе/
-   *  недоступности геолокации — дефолтный центр карты. Защита от гонок — seq,
-   *  как у остальных запросов runtime: ответ устаревшего запроса (пользователь
-   *  убрал маршрут или запустил новый) не применяется.
+   *  недоступности геолокации маршрут НЕ строится — runtime переводит route в
+   *  error с kind no-permission/unavailable, а экран показывает ту же ошибку
+   *  геолокации, что у кнопок «Моё местоположение» и «Поиск продавцов».
+   *  Фолбэк на defaultMapConfig.defaultCenter недопустим: это конфигурационный
+   *  центр карты (тестовая область), а не позиция пользователя — маршрут от
+   *  него был бы ложным. Защита от гонок — seq, как у остальных запросов
+   *  runtime: ответ устаревшего запроса (пользователь убрал маршрут или
+   *  запустил новый) не применяется.
    *
    *  Маршрут НЕ привязан к выбранному продавцу: вызывается со страницы продавца
    *  («Маршрут»), где карта может быть размонтирована, а продавца не быть в
    *  видимой области. Поэтому sellerOverride — готовая запись SellerMapRecord
    *  (её знает страница продавца), а findSellerData — fallback для вызова без
    *  override. */
-  function requestRoute(sellerId?: SellerId, sellerOverride?: SellerMapRecord): void {
-    const target = sellerId ?? state.selectedSellerId;
+  function requestRoute(target?: RouteTarget, sellerOverride?: SellerMapRecord): void {
     if (!target) return;
-    const seller = sellerOverride ?? findSellerData(state, target);
-    if (!seller) return;
+    const destination =
+      target.kind === "seller"
+        ? sellerOverride?.location ?? findSellerData(state, target.sellerId)?.location
+        : getMarketLocation(target.marketId);
+    if (!destination) return;
     const seq = ++routeSeq;
-    dispatch({ type: "ROUTE_REQUEST", sellerId: target });
+    dispatch({ type: "ROUTE_REQUEST", target });
 
     if (state.userLocation) {
-      fetchRoute(seq, target, seller, state.userLocation);
+      fetchRoute(seq, target, destination, state.userLocation);
       return;
     }
     // Геолокация ещё не запрашивалась (пользователь не нажимал «Моё
     // местоположение»): определяем её тихо и строим маршрут от неё. Если
-    // определение упало — фолбэк на дефолтный центр (в тестовой области это
-    // разумная отправная точка). Пока геолокация в полёте, seq защищает от
-    // устаревшего ответа (пользователь уже убрал маршрут или запустил новый).
+    // определение упало — маршрут НЕ строится (и не фолбэчится на дефолтный
+    // центр карты: это конфигурация, а не позиция пользователя, маршрут был бы
+    // ложным); экран по route.status = "error" с kind no-permission/unavailable
+    // покажет ту же ошибку геолокации, что у кнопок «Моё местоположение» и
+    // «Поиск продавцов». Пока геолокация в полёте, seq защищает от устаревшего
+    // ответа (пользователь уже убрал маршрут или запустил новый).
     void GeoService.resolveUserLocation().then((resolution) => {
       if (seq !== routeSeq) return;
       if (resolution.status !== "ok") {
-        fetchRoute(seq, target, seller, defaultMapConfig.defaultCenter);
+        dispatch({ type: "ROUTE_FAILED", target, kind: resolution.status });
         return;
       }
       dispatch({ type: "SET_USER_LOCATION", location: resolution.location });
-      fetchRoute(seq, target, seller, resolution.location);
+      fetchRoute(seq, target, destination, resolution.location);
     });
   }
 
-  /** Реальный запрос маршрута к routeService от точки origin. Вынесен, чтобы
-   *  requestRoute мог переиспользовать его после асинхронного определения
-   *  геолокации. Ответы применяются только для актуального запроса (seq). */
-  function fetchRoute(seq: number, target: SellerId, seller: SellerMapRecord, origin: GeoPoint): void {
+  /** Реальный запрос маршрута к routeService от точки origin до destination.
+   *  Вынесен, чтобы requestRoute мог переиспользовать его после асинхронного
+   *  определения геолокации. Ответы применяются только для актуального
+   *  запроса (seq). */
+  function fetchRoute(seq: number, target: RouteTarget, destination: GeoPoint, origin: GeoPoint): void {
     void routeService
-      .getRoute(origin, seller.location)
+      .getRoute(origin, destination)
       .then((route) => {
         if (seq === routeSeq) {
-          dispatch({ type: "ROUTE_LOADED", sellerId: target, route });
+          dispatch({ type: "ROUTE_LOADED", target, route });
         }
       })
       .catch((err: unknown) => {
         if (seq === routeSeq) {
           dispatch({
             type: "ROUTE_FAILED",
-            sellerId: target,
+            target,
             kind: err instanceof RouteNotFoundError ? "no-route" : "network",
           });
         }
       });
+  }
+
+  /** Координаты точки торговли из текущего списка markets (для построения
+   *  маршрута к точке в попапе). */
+  function getMarketLocation(marketId: MarketId): GeoPoint | null {
+    const market = state.markets.find((m) => m.marketId === marketId);
+    return market ? market.location : null;
   }
 
   /** «Убрать маршрут»: снимает полилинию с карты и переводит состояние в
@@ -1219,6 +1469,8 @@ function createMapRuntime() {
     requestSellerRefresh,
     openSellerHistory,
     refreshSellerHistory,
+    loadMarketSellers,
+    retryMarketSellers,
     toSessionSnapshot,
   };
 }

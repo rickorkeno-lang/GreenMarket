@@ -1,6 +1,12 @@
-import type { SellerId } from "@/platform-core/contracts/Action";
+import type { MarketId, SellerId } from "@/platform-core/contracts/Action";
 import type { CategoryId, ProductRecord } from "@/platform-core/contracts/DomainTypes";
-import type { GeoPoint, MapBounds, SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
+import type {
+  GeoPoint,
+  MapBounds,
+  MarketMapRecord,
+  MarketSellerRecord,
+  SellerMapRecord,
+} from "@/platform-core/map/viewmodels/MapViewModel";
 import type { SellerCardViewModel } from "@/platform-core/viewmodels/SellerCardViewModel";
 import type { RecommendedSeller } from "@/platform-core/map/recommendations/SellerRecommendations";
 import type { ProductNameSuggestion, ProductSearchResult } from "@/platform-core/map/product-search/ProductSearch";
@@ -74,6 +80,17 @@ export interface SellerRepository {
   /** Продавцы, попадающие в прямоугольник границ карты (гео-фильтр по
    *  bounds — обязанность реализации, см. выше). Сортировка не оговорена. */
   getVisibleSellers(bounds: MapBounds): Promise<SellerMapRecord[]>;
+  /* ====== Точки торговли — рынки/лавки (задача «Маркеты», GET /markets) ======
+   * Пин точки — отдельная сущность от пинов продавцов: рынок с сотнями
+   * продавцов не должен рисоваться их кластерами. Методы обслуживают карту
+   * (MapRuntime.requestVisibleMarkets/loadMarketSellers); гео-фильтр по bounds
+   * и приведение id к доменным (market-…) — обязанность реализации. */
+  /** Точки торговли в прямоугольнике границ карты. Сортировка не оговорена. */
+  getVisibleMarkets(bounds: MapBounds): Promise<MarketMapRecord[]>;
+  /** Продавцы конкретной точки (GET /markets/{id}/sellers): краткие записи
+   *  списка (ряд/место, часы, число товаров); полный профиль/товары
+   *  догружаются по sellerId штатными getSeller/getSellerCard. */
+  getMarketSellers(marketId: MarketId): Promise<MarketSellerRecord[]>;
   getSeller(id: SellerId): Promise<SellerMapRecord | null>;
   /** Поиск продавцов вокруг точки (MAP-053/MAP-018): продавцы в радиусе от
    *  точки, отсортированные согласно request.sort (сейчас — только по

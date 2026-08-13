@@ -1,6 +1,7 @@
 import type { ContentBlock, RowItem } from "@/platform-core/contracts/ContentBlock";
 import type {
   MapViewModel,
+  MarketSellerRecord,
   SellerMapRecord,
   SellerSearchState,
 } from "@/platform-core/map/viewmodels/MapViewModel";
@@ -174,6 +175,57 @@ function sellerHistoryBlocks(history: SellerHistoryEntry[]): ContentBlock[] {
   ];
 }
 
+/** Строка списка продавцов точки (задача «Маркеты»): иконка + название,
+ *  подзаголовок — «ряд · место · часы работы» (для лавки SHOP, где ряда/места
+ *  нет, остаются только часы). Действие — открыть страницу продавца
+ *  (OPEN_SELLER): список точки — это краткие записи, полный профиль догружает
+ *  страница продавца. */
+function marketSellerRow(seller: MarketSellerRecord): RowItem {
+  const where = seller.row || seller.place ? [seller.row, seller.place].filter(Boolean).join(" · ") : null;
+  const subtitle = [where, seller.workingHours].filter(Boolean).join(" · ");
+  return {
+    id: `market-seller-${seller.sellerId}`,
+    avatar: SELLER_ICON,
+    title: seller.name,
+    subtitle: subtitle || undefined,
+    action: { type: "OPEN_SELLER", payload: { sellerId: seller.sellerId } },
+  };
+}
+
+/** Попап точки торговли (bottomSheet = "marketSellers", задача «Маркеты»):
+ *  список продавцов точки. Только список/скелетон/ошибка/пусто — шапка попапа
+ *  (название, адрес, кнопка «Построить маршрут») рендерится экраном Map и не
+ *  скроллится (тот же паттерн, что у результатов поиска). Пустые состояния
+ *  различаются: загрузка ещё идёт (скелетон), список упал («Повторить»),
+ *  в точке продавцов нет совсем. */
+function marketSellersBlocks(vm: MapViewModel): ContentBlock[] {
+  // В состоянии bottomSheet = "marketSellers" точка гарантированно выбрана
+  // (SELECT_MARKET и UNSELECT_MARKET — единственные, кто управляют шитом).
+  const marketId = vm.selectedMarketId as NonNullable<MapViewModel["selectedMarketId"]>;
+  if (vm.marketSellersFailed) {
+    return [
+      {
+        type: "errorRetry",
+        text: "Не удалось загрузить продавцов точки.",
+        retryAction: { type: "RETRY_MARKET_SELLERS", payload: { marketId } },
+      },
+    ];
+  }
+  if (vm.marketSellers === null || vm.marketSellersLoading) {
+    return [{ type: "skeleton" }];
+  }
+  if (vm.marketSellers.length === 0) {
+    return [
+      { type: "sectionLabel", text: "Продавцы точки" },
+      { type: "empty", text: "Здесь пока нет продавцов" },
+    ];
+  }
+  return [
+    { type: "sectionLabel", text: "Продавцы точки" },
+    { type: "list", items: vm.marketSellers.map(marketSellerRow) },
+  ];
+}
+
 export const MapSheetAdapter = {
   toBlocks(vm: MapViewModel): ContentBlock[] {
     // Окна мастера «Поиск продавцов» и история просмотра обрабатываются раньше
@@ -187,6 +239,9 @@ export const MapSheetAdapter = {
     }
     if (vm.bottomSheet === "sellerHistory") {
       return sellerHistoryBlocks(vm.sellerHistory);
+    }
+    if (vm.bottomSheet === "marketSellers") {
+      return marketSellersBlocks(vm);
     }
     // Карточка выбранного продавца — тоже до проверки пустой области: продавца
     // из результатов поиска (или восстановленного сеанса, searchResult) может

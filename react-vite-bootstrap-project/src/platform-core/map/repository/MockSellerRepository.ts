@@ -1,6 +1,12 @@
-import { asSellerId, type SellerId } from "@/platform-core/contracts/Action";
+import { asMarketId, asSellerId, type MarketId, type SellerId } from "@/platform-core/contracts/Action";
 import { asCategoryId, PRODUCT_AVAILABILITY_ORDER } from "@/platform-core/contracts/DomainTypes";
-import type { GeoPoint, MapBounds, SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
+import type {
+  GeoPoint,
+  MapBounds,
+  MarketMapRecord,
+  MarketSellerRecord,
+  SellerMapRecord,
+} from "@/platform-core/map/viewmodels/MapViewModel";
 import type {
   CategoryOption,
   SellerRepository,
@@ -87,6 +93,65 @@ function buildSellers(): SellerMapRecord[] {
 }
 
 const ALL_SELLERS = buildSellers();
+
+/* ====== Точки торговли (задача «Маркеты») ======
+ * Один рынок в Казани (как в БД бэкенда — GET /markets возвращает ту же
+ * точку) с большим числом продавцов: каждый со своим рядом/местом, часами и
+ * числом товаров. Данные детерминированы, как и остальной мок. Продавцы
+ * рынка НЕ входят в ALL_SELLERS (пин рынка — одно место, список продавцов
+ * открывается попапом); их sellerId начинаются со 101, чтобы не
+ * конфликтовать с продавцами каталога (seller-1..seller-24).
+ *
+ * 45 продавцов — «большое количество, закреплённое за маркетом»: список
+ *  скроллится в попапе и не выталкивает кнопку маршрута за экран. */
+
+const KAZAN_MARKET_LOCATION: GeoPoint = { lat: 55.796, lng: 49.1064 };
+
+const MARKET_KINDS = [
+  "Овощи и зелень", "Фрукты и ягоды", "Мясо", "Молочные продукты", "Хлеб и выпечка",
+  "Мёд и пасека", "Рыба", "Орехи и сухофрукты", "Сыры", "Колбасы и копчёности",
+  "Птица", "Морепродукты", "Крупы и бобовые", "Чай и травы", "Сладости и чак-чак",
+  "Варенье и джемы", "Грибы", "Растительное масло", "Пельмени", "Мороженое",
+  "Квас и лимонады", "Пироги", "Творог и сметана", "Кумыс", "Беляши и эчпочмак",
+  "Приправы и специи", "Квашеная капуста", "Соленья", "Сушёные травы", "Яйца",
+  "Татарские сладости", "Мёд с пасеки", "Свежая выпечка", "Рыбные деликатесы",
+  "Фермерское молоко", "Домашние сыры", "Копчёная птица", "Гречишный мёд",
+  "Сезонные фрукты", "Маринованные огурцы", "Домашний хлеб", "Козий сыр",
+  "Мясные полуфабрикаты", "Солёная рыба", "Ягодное варенье",
+];
+
+const MARKET_ROWS = ["А", "Б", "В", "Г", "Д", "Е", "Ж", "З", "И", "К", "Л", "М"];
+
+function buildMarketSellers(): MarketSellerRecord[] {
+  return MARKET_KINDS.map((kind, i) => ({
+    sellerId: asSellerId(`seller-${101 + i}`),
+    name: `Лавка «${kind}»`,
+    row: `Ряд ${MARKET_ROWS[i % MARKET_ROWS.length]}`,
+    place: `Место ${((i * 7) % 30) + 1}`,
+    workingHours: i % 4 === 0 ? "08:00–19:00" : "08:00–20:00",
+    shortDescription: null,
+    productCount: 40 + ((i * 23) % 300),
+  }));
+}
+
+const MOCK_MARKETS: MarketMapRecord[] = [
+  {
+    marketId: asMarketId("market-1"),
+    name: "Центральный рынок",
+    type: "MARKET",
+    address: "Казань, ул. Московская, 1",
+    location: KAZAN_MARKET_LOCATION,
+    sellerCount: MARKET_KINDS.length,
+  },
+];
+
+/** Продавцы рынка по marketId — единственная точка, поэтому таблица из одной
+ *  записи. Возвращает null, если marketId неизвестен (в отличие от пустого
+ *  списка: пустой список — «в точке нет продавцов», а не «точки нет»). */
+function findMarketSellers(marketId: MarketId): MarketSellerRecord[] | null {
+  if (marketId !== MOCK_MARKETS[0].marketId) return null;
+  return buildMarketSellers();
+}
 
 /* ====== Поиск по товарам ======
  * Индекс товаров: нормализованное название → кандидат поиска (название +
@@ -177,7 +242,7 @@ const TRUST_LEVELS = ["high", "high", "medium", "low"] as const;
  *  (только те, что реально диспатчатся: маршрут, избранное, репорт). */
 function sellerCardAvailableActions(sellerId: SellerId): AvailableAction[] {
   return [
-    { id: "start-route", action: { type: "START_ROUTE" }, label: "Начать маршрут", icon: "navigation", variant: "primary" },
+    { id: "start-route", action: { type: "START_ROUTE", payload: { sellerId } }, label: "Начать маршрут", icon: "navigation", variant: "primary" },
     {
       id: "favorite",
       action: { type: "TOGGLE_FAVORITE_SELLER", payload: { sellerId } },
@@ -202,6 +267,15 @@ export const MockSellerRepository: SellerRepository = {
 
   getVisibleSellers(bounds) {
     return delay(ALL_SELLERS.filter((s) => isWithinBounds(s.location, bounds)));
+  },
+
+  getVisibleMarkets(bounds) {
+    return delay(MOCK_MARKETS.filter((m) => isWithinBounds(m.location, bounds)));
+  },
+
+  getMarketSellers(marketId) {
+    const sellers = findMarketSellers(marketId);
+    return delay(sellers ?? []);
   },
 
   getSeller(id: SellerId) {

@@ -1,10 +1,17 @@
-import type { SellerId } from "@/platform-core/contracts/Action";
-import type { CameraParams, GeoPoint, MapBounds, RouteModel, SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
+import type { MarketId, SellerId } from "@/platform-core/contracts/Action";
+import type {
+  CameraParams,
+  GeoPoint,
+  MapBounds,
+  MarketMapRecord,
+  RouteModel,
+  SellerMapRecord,
+} from "@/platform-core/map/viewmodels/MapViewModel";
 
 export type CameraChangeReason = "move" | "zoom";
 
 /** IMP-003.1 §3 / IMP-003.1.1 §2 / IMP-003.1.2 §3: контракт MapAdapter.
- *  MapScreen знает только этот файл — ни один тип Leaflet/react-leaflet
+ *  MapScreenView знает только этот файл — ни один тип Leaflet/react-leaflet
  *  сюда не просачивается. Замена картографического движка = замена
  *  реализации ниже этого контракта, без изменения экрана.
  *
@@ -16,6 +23,11 @@ export type CameraChangeReason = "move" | "zoom";
 export interface MapAdapterProps {
   sellers: SellerMapRecord[];
   selectedSellerId: SellerId | null;
+  /** Точки торговли в видимой области (задача «Маркеты»): пины рынков/лавок.
+   *  Рисуются отдельным слоем (НЕ кластеризуются — точек мало, каждая важна). */
+  markets: MarketMapRecord[];
+  /** Выбранная точка торговли (открыт её попап) — пин подсвечивается. */
+  selectedMarketId: MarketId | null;
   userLocation: GeoPoint | null;
   camera: CameraParams;
   /** Маршрут до выбранного продавца (MAP-020) — декодированная полилиния.
@@ -26,6 +38,8 @@ export interface MapAdapterProps {
   onCameraChange: (camera: CameraParams, reason: CameraChangeReason) => void;
   onVisibleBoundsChange: (bounds: MapBounds) => void;
   onSellerSelect: (sellerId: SellerId) => void;
+  /** Клик по пину точки торговли: открывает попап с продавцами точки. */
+  onMarketSelect: (marketId: MarketId) => void;
   onMapBackgroundClick: () => void;
   /** Императивный доступ для FAB "центрировать карту" — не завязан на
    *  конкретный движок: реализация решает, что значит "центрировать". */

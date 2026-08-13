@@ -15,6 +15,7 @@ import { InitialsFormatter } from '@/platform-core/formatting/InitialsFormatter'
 import { RatingFormatter } from '@/platform-core/formatting/RatingFormatter';
 import { DistanceFormatter } from '@/platform-core/formatting/DistanceFormatter';
 import type { CategoryId } from '@/platform-core/contracts/DomainTypes';
+import type { SellerId } from '@/platform-core/contracts/Action';
 import { SellerCardHeader } from '@/screens/seller-card/SellerCardHeader';
 import { SellerCardActions } from '@/screens/seller-card/SellerCardActions';
 import { SellerCardProducts } from '@/screens/seller-card/SellerCardProducts';
@@ -24,10 +25,12 @@ import { useSellerCardController } from '@/screens/seller-card/useSellerCardCont
 import '@/screens/seller-card/seller-card.css';
 
 /**
- * Страница продавца (full-screen, /seller/:sellerId). Реализация заготовки
+ * Карточка продавца — контент Bottom Sheet ПОВЕРХ карты (ТЗ-024 §10), а не
+ * страница: рендерится MapSurface как оверлей над MapScreenView, sellerId
+ * приходит из NavigationEntry (стек панели). Реализация заготовки
  * SellerCardScreen (ТЗ-025 §12).
  *
- * Экран чисто презентационный: все данные, URL, навигация, действия и
+ * Экран чисто презентационный: все данные, навигация, действия и
  * бизнес-правила агрегируются в контроллере (useSellerCardController →
  * SellerCardPageModel, см. ревью-замечания 5–7). Здесь только рендер
  * готовой модели: баннер-заглушка → превью-плитки → карточка «О продавце»
@@ -51,8 +54,8 @@ function categoryEmoji(categoryId: CategoryId | undefined): string {
   return (categoryId && CATEGORY_EMOJI[categoryId]) ?? '🏪';
 }
 
-export function SellerCardScreenView() {
-  const vm = useSellerCardController();
+export function SellerCardScreenView({ sellerId }: { sellerId: SellerId }) {
+  const vm = useSellerCardController(sellerId);
 
   return (
     <div data-testid="seller-card-screen" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
