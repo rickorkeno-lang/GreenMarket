@@ -52,4 +52,12 @@ export interface MapAdapterProps {
    *  виден целиком (с запасом в один зум-уровень). 0 — маршрута нет/запрос
    *  ещё не поступал. */
   fitRouteRequestToken: number;
+  /** MAP-031: размер контейнера карты мог измениться (browser fullscreen —
+   *  вход/выход через MapSurface). Инкрементируется при каждом фактическом
+   *  fullscreenchange; реализация движка обязана пересчитать свою геометрию
+   *  под новый размер (у Leaflet — map.invalidateSize()). Контракт императивный
+   *  и движко-независимый, как centerRequestToken/fitRouteRequestToken: Fullscreen
+   *  hook с Leaflet напрямую не связан (IMP-003.1 §3), изменение доходит до
+   *  движка только через этот адаптер. 0 — сигналов не было. */
+  sizeChangeToken: number;
 }

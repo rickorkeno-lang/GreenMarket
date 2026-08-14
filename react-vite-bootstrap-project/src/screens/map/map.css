@@ -14,6 +14,19 @@
  * вместо «дыры» виден фон поверхности. Сам режим не трогает карту: Leaflet
  * остаётся смонтированным, состояние камеры/маркеров/фильтров/маршрута/панелей
  * не сбрасывается. */
+.gm-map-surface {
+  /* MAP-032: длительности анимаций карты — ЛОКАЛЬНО, а не глобально.
+   * Замедление ×1.5 (80/140/220/320 → 120/210/330/480) применяется только к
+   * элементам карты через --gm-duration-*, а общие motion-токены Design System
+   * не тронуты (замечание: их изменение затронуло весь Customer UI). Правило
+   * перекрывает глобальные значения на поддереве поверхности; вне её работает
+   * fallback var(--gm-duration-*, var(--duration-*)). */
+  --gm-duration-instant: 120ms;
+  --gm-duration-fast: 210ms;
+  --gm-duration-normal: 330ms;
+  --gm-duration-slow: 480ms;
+}
+
 .gm-map-surface:fullscreen {
   background: var(--color-surface-base);
 }
@@ -41,14 +54,14 @@
    * анимация играет один раз на mount. */
   stroke-dasharray: 2400;
   stroke-dashoffset: 2400;
-  animation: gm-map-route-in var(--duration-slow) var(--easing-decelerate) 1.25s both;
+  animation: gm-map-route-in var(--gm-duration-slow, var(--duration-slow)) var(--easing-decelerate) 1.25s both;
 }
 
 .gm-map-route--casing {
   stroke: #ffffff;
   stroke-width: 9;
   opacity: 0.7;
-  animation: gm-map-casing-in var(--duration-slow) var(--easing-decelerate) 1.25s both;
+  animation: gm-map-casing-in var(--gm-duration-slow, var(--duration-slow)) var(--easing-decelerate) 1.25s both;
 }
 
 @keyframes gm-map-route-in {
@@ -77,7 +90,7 @@
  * приходит через Leaflet pathOptions.className): плавное появление, а не
  * «моргание» готовой точки. */
 .gm-map-user-location {
-  animation: gm-map-dot-in var(--duration-normal) var(--easing-decelerate);
+  animation: gm-map-dot-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
 }
 
 @keyframes gm-map-dot-in {
@@ -95,7 +108,7 @@
  * вешается на keyed-обёртку, перемонтируемую при смене mapState.bottomSheet —
  * новый контент мягко проявляется. */
 .gm-map-sheet-fade {
-  animation: gm-map-sheet-fade-in var(--duration-normal) var(--easing-decelerate);
+  animation: gm-map-sheet-fade-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
 }
 
 @keyframes gm-map-sheet-fade-in {
@@ -146,7 +159,7 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   box-shadow: var(--elevation-3);
-  animation: gm-map-fab-in var(--duration-normal) var(--easing-decelerate);
+  animation: gm-map-fab-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
 }
 
 /* «Убрать маршрут» (MAP-020): левый нижний угол, зеркально панели FAB
@@ -171,7 +184,7 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  animation: gm-map-fab-in var(--duration-normal) var(--easing-decelerate);
+  animation: gm-map-fab-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
 }
 
 .gm-map-route-clear:hover {
@@ -215,7 +228,7 @@
   color: var(--color-text-primary);
   font-family: var(--font-family-body);
   font-size: var(--font-size-sm);
-  animation: gm-map-banner-in var(--duration-normal) var(--easing-decelerate);
+  animation: gm-map-banner-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
 }
 
 @keyframes gm-map-banner-in {
@@ -353,8 +366,8 @@
     0 0 0 calc(4px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-brand-primary-light) 45%, transparent),
     0 0 calc(16px * var(--gm-glow-scale, 1)) calc(4px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-brand-primary-light) 55%, transparent);
   transition:
-    transform var(--duration-fast) var(--easing-standard),
-    box-shadow var(--duration-fast) var(--easing-standard);
+    transform var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard),
+    box-shadow var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard);
   cursor: pointer;
 }
 
@@ -394,6 +407,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* MAP-032: локальные длительности карты обнуляются так же, как глобальные
+   * motion-токены (tokens.css) — transition на точках/дропдаунах/подписях не
+   * анимируются. Входные анимации ниже гасятся явно (animation: none). */
+  .gm-map-surface {
+    --gm-duration-instant: 0ms;
+    --gm-duration-fast: 0ms;
+    --gm-duration-normal: 0ms;
+    --gm-duration-slow: 0ms;
+  }
+
   .gm-map-marker__dot--selected::after {
     display: none;
   }
@@ -426,6 +449,20 @@
     0 0 0 1px rgba(0, 0, 0, 0.18),
     0 0 0 calc(2px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-disabled-content) 40%, transparent),
     0 0 calc(9px * var(--gm-glow-scale, 1)) calc(2px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-disabled-content) 35%, transparent);
+}
+
+/* Upd-8: статус доступности неизвестен (isAvailable = undefined) — полая
+ * точка с контуром нейтрального токена. Отличается И от «доступен» (залитая
+ * зелёная), И от «недоступен» (залитая серая): пустая середина буквально
+ * означает «данных нет» — неизвестный статус не превращается в ложный факт. */
+.gm-map-marker__dot--unknown {
+  background: transparent;
+  border-color: var(--color-text-tertiary);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 0 0 calc(2px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-text-tertiary) 35%, transparent),
+    0 0 calc(9px * var(--gm-glow-scale, 1)) calc(2px * var(--gm-glow-scale, 1)) color-mix(in srgb, var(--color-text-tertiary) 30%, transparent);
 }
 
 /* Hover: точка заметно подрастает (transform — дёшево), подпись всплывает
@@ -544,7 +581,7 @@
     0 1px 4px rgba(0, 0, 0, 0.35),
     0 0 0 1px rgba(0, 0, 0, 0.15),
     0 0 0 2px rgba(255, 255, 255, 0.35);
-  transition: transform var(--duration-fast) var(--easing-standard);
+  transition: transform var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard);
   cursor: pointer;
 }
 
@@ -569,7 +606,7 @@
   line-height: 1;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.5);
   white-space: nowrap;
-  transition: transform var(--duration-fast) var(--easing-standard);
+  transition: transform var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard);
 }
 
 .gm-map-cluster__count::after {
@@ -625,7 +662,7 @@
   /* MAP-032: дропдаун «выпадает» (fade + сдвиг) при открытии; список
    * обновляется на каждый ввод без перемонтирования контейнера, поэтому
    * анимация не переигрывается при вводе. */
-  animation: gm-map-dropdown-in var(--duration-fast) var(--easing-standard);
+  animation: gm-map-dropdown-in var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard);
 }
 
 @keyframes gm-map-dropdown-in {
@@ -655,7 +692,7 @@
   font-family: var(--font-family-body);
   font-size: var(--font-size-sm);
   cursor: pointer;
-  transition: background var(--duration-fast) var(--easing-standard);
+  transition: background var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard);
 }
 
 .gm-map-search__retry:hover {
@@ -674,7 +711,7 @@
   text-align: left;
   font-family: var(--font-family-body);
   cursor: pointer;
-  transition: background var(--duration-fast) var(--easing-standard);
+  transition: background var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard);
 }
 
 .gm-map-search__suggestion:hover {
@@ -735,7 +772,7 @@
   box-shadow: var(--elevation-1);
   /* MAP-032: переключатель «Искать по товару/названию» появляется плавно
    * (как дропдаун), а не мгновенно. Класс общий для карты и списка продавцов. */
-  animation: gm-map-dropdown-in var(--duration-fast) var(--easing-standard);
+  animation: gm-map-dropdown-in var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard);
 }
 
 .gm-map-search__mode-switch:hover {
@@ -808,11 +845,11 @@
     0 2px 6px rgba(0, 0, 0, 0.35),
     0 0 0 1px rgba(0, 0, 0, 0.15);
   cursor: pointer;
-  transition: transform var(--duration-fast) var(--easing-standard);
+  transition: transform var(--gm-duration-fast, var(--duration-fast)) var(--easing-standard);
   /* MAP-032: булавка «попадает» на место при появлении (первая загрузка точек)
    * и при смене выбора (setIcon пересоздаёт DOM) — точки рынков НЕ входят в
    * MarkerClusterGroup, поэтому анимация не переигрывается на зуме. */
-  animation: gm-map-pin-in var(--duration-normal) var(--easing-decelerate);
+  animation: gm-map-pin-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
 }
 
 @keyframes gm-map-pin-in {

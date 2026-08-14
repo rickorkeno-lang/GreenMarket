@@ -15,6 +15,7 @@ import type {
 } from "@/platform-core/map/repository/SellerRepository";
 import { GeoService } from "@/platform-core/map/gis/GeoService";
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
+import { compareDistanceMeters } from "@/platform-core/map/compare";
 import { DistanceFormatter } from "@/platform-core/formatting/DistanceFormatter";
 import type { SellerCardViewModel } from "@/platform-core/viewmodels/SellerCardViewModel";
 import type { AvailableAction, PhotoItem } from "@/platform-core/contracts/ContentBlock";
@@ -207,10 +208,12 @@ function buildProductIndex(): Map<string, ProductIndexEntry> {
 const PRODUCT_INDEX = buildProductIndex();
 
 /** Продавцы, у которых есть товар из записи индекса, по расстоянию (как в
- *  обычном поиске: «Сортировать продавцов в них как обычно»). */
+ *  обычном поиске: «Сортировать продавцов в них как обычно»). Упд-8: продавцы
+ *  с неизвестным расстоянием (undefined) уходят в конец, а не встают первыми
+ *  как «рядом» (бывшее `?? 0`). */
 function matchesByDistance(entry: ProductIndexEntry): ProductSellerMatch[] {
   return entry.matches.slice().sort(
-    (a, b) => (a.seller.distanceMeters ?? 0) - (b.seller.distanceMeters ?? 0),
+    (a, b) => compareDistanceMeters(a.seller.distanceMeters, b.seller.distanceMeters),
   );
 }
 
@@ -220,7 +223,9 @@ function matchesByDistance(entry: ProductIndexEntry): ProductSellerMatch[] {
  *  поиска не меняются (MAP-053: «архитектура под будущие сортировки»). */
 const SELLER_SORTS: Record<SellerSortKey, (a: SellerMapRecord, b: SellerMapRecord) => number> = {
   // По расстоянию от точки поиска: distanceMeters уже пересчитан от origin.
-  distance: (a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0),
+  // Упд-8: известные расстояния по возрастанию, продавцы с undefined — в конец
+  // (не «рядом», как было с `?? 0`).
+  distance: (a, b) => compareDistanceMeters(a.distanceMeters, b.distanceMeters),
 };
 
 function isWithinBounds(point: GeoPoint, bounds: MapBounds): boolean {

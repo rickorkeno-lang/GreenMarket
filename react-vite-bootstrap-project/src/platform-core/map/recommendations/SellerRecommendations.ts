@@ -1,4 +1,5 @@
 import type { SellerMapRecord } from "@/platform-core/map/viewmodels/MapViewModel";
+import { compareDistanceMeters } from "@/platform-core/map/compare";
 
 /* ============================================================================
  * Рекомендации продавцов (низ страницы продавца).
@@ -53,7 +54,9 @@ export function rankRecommendedSellers(
       return (
         Number(b.allCategoriesShared) - Number(a.allCategoriesShared) ||
         b.commonCategories - a.commonCategories ||
-        (a.seller.distanceMeters ?? 0) - (b.seller.distanceMeters ?? 0) ||
+        // Упд-8: неизвестное расстояние (undefined) не приравнивается к 0 —
+        // известные расстояния впереди, продавцы с undefined уходят в конец.
+        compareDistanceMeters(a.seller.distanceMeters, b.seller.distanceMeters) ||
         (a.seller.sellerId < b.seller.sellerId ? -1 : 1)
       );
     });

@@ -16,8 +16,12 @@ import {
   glowScale,
   MARKET_ICON_ANCHOR,
   MARKET_ICON_SIZE,
+  resolveSellerMarkerVisual,
   sellerIconMetrics,
   sellerMarkerState,
+  sellerMarkerTreatment,
+  type CategoryMarkerVisual,
+  type SellerMarkerTreatment,
 } from "@/platform-core/map/gis/MarkerStyle";
 import "leaflet/dist/leaflet.css";
 
@@ -30,11 +34,12 @@ import "leaflet/dist/leaflet.css";
  *  (дефолты dragging/doubleClickZoom = true) и explicit-конфигурируются
  *  через MapConfig, а не магическими значениями в компоненте. */
 
-/** Кэш DivIcon маркеров: ключ = sellerId:state. Геометрия и разметка иконки
- *  НЕ зависят от zoom (все zoom-эффекты — CSS-переменные на контейнере карты),
- *  поэтому иконку достаточно создать один раз на состояние. Стабильная ссылка
- *  важна: react-leaflet при каждой отрисовке сверяет icon по identity и, если
- *  он не менялся, НЕ дёргает marker.setIcon — у MarkerClusterGroup не сбиваются
+/** Кэш DivIcon маркеров: ключ = sellerId:state:visualKey:treatmentKey (см.
+ *  sellerDivIcon). Геометрия и разметка иконки НЕ зависят от zoom (все
+ *  zoom-эффекты — CSS-переменные на контейнере карты), поэтому иконку
+ *  достаточно создать один раз на состояние. Стабильная ссылка важна:
+ *  react-leaflet при каждой отрисовке сверяет icon по identity и, если он не
+ *  менялся, НЕ дёргает marker.setIcon — у MarkerClusterGroup не сбиваются
  *  внутренние bounds, маркеры не пропадают/не «прыгают» при зуммах, подписи
  *  не пересоздаются вместе с иконкой и не мигают. */
 const sellerIconCache = new Map<string, L.DivIcon>();
@@ -58,24 +63,51 @@ function marketDivIcon(name: string, marketId: MarketId, sellerCount: number, se
   return icon;
 }
 
+/** Ключ визуала категории для кэша DivIcon (см. sellerIconCache). Сейчас
+ *  единственный вид — "circle". Будущее: при появлении пиктограмм ключ обязан
+ *  различать их по содержимому (например, iconKey), чтобы маркеры разных
+ *  категорий не делили одну кэшированную DivIcon. Это точка расширения
+ *  визуального кодирования категорий (см. MarkerStyle). */
+function markerVisualKey(visual: CategoryMarkerVisual): string {
+  switch (visual.kind) {
+    case "circle":
+      return visual.kind;
+  }
+}
+
 function sellerDivIcon(
   name: string,
   selected: boolean,
-  available: boolean,
+  available: boolean | undefined | null,
   sellerId: SellerId,
+  visual: CategoryMarkerVisual,
+  treatment: SellerMarkerTreatment,
 ): L.DivIcon {
   // Структура/геометрия маркера строятся в чистом модуле MarkerStyle (без
   // импорта leaflet — юнит-тестируем); здесь только обёртка в L.divIcon.
   // Стили состояния/зума (цвета, кольца, рост точки и свечения) живут в
   // src/screens/map/map.css через CSS-переменные --gm-dot-scale/--gm-glow-scale.
+  //
+  // Визуальное кодирование — две независимые оси (см. MarkerStyle):
+  //   категория (visual, из resolveSellerMarkerVisual(seller.categories)) и
+  //   статус (treatment, из sellerMarkerTreatment(seller.isAvailable): открыт /
+  //   закрыт / неизвестен). Обе входят в ключ кэша: маркеры разных категорий и
+  //   статусов НЕ должны делить одну DivIcon (например, выбранный открытый и
+  //   выбранный закрытый продавец — разные иконки, т.к. у закрытого в будущем
+  //   появится замочек).
+  //
+  // Upd-8: available — это seller.isAvailable «как есть» (boolean | undefined |
+  // null), а не `?? false`. undefined/null → состояние "unknown" (полая точка)
+  // и оформление "faded" (иконка теряет цвет), а не «недоступен»: неизвестный
+  // статус не превращается в ложный факт.
   const state = sellerMarkerState(selected, available);
-  const key = `${sellerId}:${state}`;
+  const key = `${sellerId}:${state}:${markerVisualKey(visual)}:${treatment.kind}`;
   const cached = sellerIconCache.get(key);
   if (cached) return cached;
-  const metrics = sellerIconMetrics(state);
+  const metrics = sellerIconMetrics(state, visual, treatment);
   const icon = L.divIcon({
     className: "gm-map-marker",
-    html: buildSellerMarkerHtml(name, sellerId, state, metrics),
+    html: buildSellerMarkerHtml(name, sellerId, state, metrics, visual, treatment),
     iconSize: metrics.size,
     iconAnchor: metrics.anchor,
   });
@@ -190,6 +222,32 @@ function FitRouteBridge({ token, route }: { token: number; route: MapAdapterProp
       duration: ROUTE_FIT_DURATION_S,
     });
   }, [token, route, map]);
+  return null;
+}
+
+/** MAP-031: пересчёт геометрии Leaflet после изменения размера контейнера.
+ *  Вход/выход из browser fullscreen (через MapSurface) меняет размер
+ *  контейнера, но Leaflet измеряет свой viewport при инициализации и сам о
+ *  новых размерах не узнаёт — без invalidateSize() возможны неверный размер
+ *  карты, незаполненные тайлы, смещённый центр и неверная геометрия после
+ *  выхода из fullscreen.
+ *
+ *  Сигнал приходит как императивный токен через MapAdapter (контракт
+ *  MapAdapterProps.sizeChangeToken) — Fullscreen hook с Leaflet напрямую не
+ *  связан: единственный файл, который знает "leaflet", — этот (IMP-003.1 §3).
+ *  rAF: ждём кадр, чтобы UA уже применил полноэкранные размеры и invalidateSize
+ *  измерил финальный размер контейнера. animate:false — возврат к прежнему
+ *  центру (встроенное поведение invalidateSize) без анимации пана. */
+function MapResizeBridge({ token }: { token: number }) {
+  const map = useMap();
+  const lastToken = useRef(token);
+  useEffect(() => {
+    if (token === lastToken.current) return;
+    lastToken.current = token;
+    if (token <= 0) return;
+    const frame = requestAnimationFrame(() => map.invalidateSize({ animate: false }));
+    return () => cancelAnimationFrame(frame);
+  }, [token, map]);
   return null;
 }
 
@@ -462,6 +520,7 @@ export function LeafletAdapter({
   onMapBackgroundClick,
   centerRequestToken,
   fitRouteRequestToken,
+  sizeChangeToken,
 }: MapAdapterProps) {
   // Выбираем провайдера тайлов в зависимости от настроек POI (MAP-027)
   const activeTileConfig = hideMapPois ? CleanMapTileProvider : defaultMapConfig.tileProvider;
@@ -514,6 +573,7 @@ export function LeafletAdapter({
         />
         <CenterRequestBridge token={centerRequestToken} camera={camera} />
         <FitRouteBridge token={fitRouteRequestToken} route={route} />
+        <MapResizeBridge token={sizeChangeToken} />
         <LabelCollisionBridge selectedSellerId={selectedSellerId} />
 
         {userLocation && (
@@ -590,11 +650,24 @@ export function LeafletAdapter({
           {sellers.map((seller) =>
             // Замечание №2: продавец может не иметь координат (location === null) —
             // без координат маркер не ставим (ложную позицию на карте не создаём).
+            // Upd-8: isAvailable передаётся «как есть» (без `?? false`) — статус
+            // undefined не превращается в «недоступен» (см. sellerDivIcon).
+            // Визуальное кодирование (см. MarkerStyle): категория приходит в
+            // маркер через resolveSellerMarkerVisual (категория — часть маркера,
+            // «что здесь?», а не только фильтра «покажи мне мясо»), статус — через
+            // sellerMarkerTreatment(seller.isAvailable) (открыт/закрыт/неизвестен).
             seller.location ? (
               <Marker
                 key={seller.sellerId}
                 position={[seller.location.lat, seller.location.lng]}
-                icon={sellerDivIcon(seller.name, seller.sellerId === selectedSellerId, seller.isAvailable ?? false, seller.sellerId)}
+                icon={sellerDivIcon(
+                  seller.name,
+                  seller.sellerId === selectedSellerId,
+                  seller.isAvailable,
+                  seller.sellerId,
+                  resolveSellerMarkerVisual(seller.categories),
+                  sellerMarkerTreatment(seller.isAvailable),
+                )}
                 eventHandlers={{ click: () => onSellerSelect(seller.sellerId) }}
               />
             ) : null,
