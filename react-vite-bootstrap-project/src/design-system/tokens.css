@@ -92,6 +92,38 @@
   --color-disabled-content: #5c625d;
 }
 
+/* Контрастная тема (вкл. через ThemeProvider → data-contrast='true' на <html>).
+   Усиливает контраст текста и бордеров ПОВЕРХ активной темы (light/dark):
+   текст стремится к чистому чёрному/белому, вторичный/третичный — темнее,
+   границы — заметнее. Оверрайды токенов, поэтому работают на любом компоненте,
+   который потребляет цвета через CSS-переменные (все компоненты проекта). */
+:root[data-contrast='true'],
+[data-theme='light'][data-contrast='true'] {
+  --color-text-primary: #000000;
+  --color-text-secondary: #1f2621;
+  --color-text-tertiary: #3b4440;
+  --color-text-link: #0d4a2f;
+  --color-text-disabled: #4d554f;
+  --color-brand-primary: #1e5a3f;
+  --color-border-default: #6f6a5d;
+  --color-border-subtle: #8a8577;
+  --color-border-strong: #3f3a30;
+  --color-border-focus: #0d4a2f;
+}
+
+[data-theme='dark'][data-contrast='true'] {
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #e3e7e3;
+  --color-text-tertiary: #b4bcb6;
+  --color-text-link: #9ad1b3;
+  --color-text-disabled: #7c837f;
+  --color-brand-primary: #7ec29d;
+  --color-border-default: #5a6166;
+  --color-border-subtle: #444a4f;
+  --color-border-strong: #7d868c;
+  --color-border-focus: #9ad1b3;
+}
+
 :root {
   /* Typography */
   --font-family-display: 'Fraunces', Georgia, 'Times New Roman', serif;
@@ -172,10 +204,10 @@
   --z-tooltip: 1300;
 
   /* Motion */
-  --duration-instant: 120ms;
-  --duration-fast: 210ms;
-  --duration-normal: 330ms;
-  --duration-slow: 480ms;
+  --duration-instant: 80ms;
+  --duration-fast: 140ms;
+  --duration-normal: 220ms;
+  --duration-slow: 320ms;
   --easing-standard: cubic-bezier(0.2, 0, 0, 1);
   --easing-decelerate: cubic-bezier(0, 0, 0, 1);
   --easing-accelerate: cubic-bezier(0.3, 0, 1, 1);

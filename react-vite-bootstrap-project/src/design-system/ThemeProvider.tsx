@@ -21,18 +21,28 @@ function getPreferredMode(): ThemeMode {
  */
 export function ThemeProvider({ children, defaultMode }: ThemeProviderProps) {
   const [mode, setModeState] = useState<ThemeMode>(defaultMode ?? getPreferredMode());
+  const [contrast, setContrastState] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', mode);
   }, [mode]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-contrast', String(contrast));
+  }, [contrast]);
 
   const setMode = useCallback((next: ThemeMode) => setModeState(next), []);
   const toggleMode = useCallback(
     () => setModeState((current) => (current === 'light' ? 'dark' : 'light')),
     [],
   );
+  const setContrast = useCallback((next: boolean) => setContrastState(next), []);
+  const toggleContrast = useCallback(() => setContrastState((current) => !current), []);
 
-  const value = useMemo(() => buildThemeValue(mode, setMode, toggleMode), [mode, setMode, toggleMode]);
+  const value = useMemo(
+    () => buildThemeValue(mode, contrast, setMode, toggleMode, setContrast, toggleContrast),
+    [mode, contrast, setMode, toggleMode, setContrast, toggleContrast],
+  );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

@@ -32,10 +32,13 @@ async function run() {
   const current = seller(0, [A, B]);
   const allShared = seller(1, [A, B], 500); // все категории общие
   const allSharedCloser = seller(2, [A, B], 400); // тоже все общие, но ближе
+  // Upd-8: продавец, у которого бэкенд не отдал расстояние. Переопределяем
+  // явно (через дефолт-параметр undefined передать нельзя — JS применит 100).
+  const unknownDist = { ...seller(5, [A, B]), distanceMeters: undefined };
   const oneShared = seller(3, [A, C], 300); // одна общая
   const zeroShared = seller(4, [C, D], 50); // общих нет → отсекается
 
-  const recs = rankRecommendedSellers(current, [allShared, oneShared, zeroShared, allSharedCloser, current]);
+  const recs = rankRecommendedSellers(current, [allShared, oneShared, zeroShared, allSharedCloser, current, unknownDist]);
 
   // Сам продавец и продавцы без общих категорий не попадают в результат.
   assert.equal(
@@ -50,22 +53,26 @@ async function run() {
   );
 
   // Порядок: сначала все общие категории, затем убывание числа общих.
+  // Внутри группы общих категорий — известные расстояния по возрастанию,
+  // продавец с неизвестным расстоянием (Upd-8) уходит в конец группы: он НЕ
+  // встаёт первым «как будто рядом» (бывшее `?? 0`).
   assert.deepEqual(
     recs.map((r) => r.seller.sellerId),
-    [allSharedCloser.sellerId, allShared.sellerId, oneShared.sellerId],
-    "порядок: все общие категории → убывание числа общих"
+    [allSharedCloser.sellerId, allShared.sellerId, unknownDist.sellerId, oneShared.sellerId],
+    "порядок: все общие категории (по расстоянию, unknown в конце) → убывание числа общих"
   );
 
   // Атрибуты рекомендаций.
   assert.equal(recs[0].allCategoriesShared, true, "все категории общие → allCategoriesShared");
   assert.equal(recs[0].commonCategories, 2, "число общих категорий");
   assert.equal(recs[1].allCategoriesShared, true);
-  assert.equal(recs[2].allCategoriesShared, false, "частичное совпадение");
-  assert.equal(recs[2].commonCategories, 1);
-  assert.deepEqual(recs[2].sharedCategoryNames, ["Категория a"], "названия общих категорий");
+  assert.equal(recs[2].allCategoriesShared, true, "unknown-расстояние не влияет на категории");
+  assert.equal(recs[3].allCategoriesShared, false, "частичное совпадение");
+  assert.equal(recs[3].commonCategories, 1);
+  assert.deepEqual(recs[3].sharedCategoryNames, ["Категория a"], "названия общих категорий");
 
   // Стабильность: тот же вход → тот же порядок.
-  const recsAgain = rankRecommendedSellers(current, [allShared, oneShared, zeroShared, allSharedCloser, current]);
+  const recsAgain = rankRecommendedSellers(current, [allShared, oneShared, zeroShared, allSharedCloser, current, unknownDist]);
   assert.deepEqual(
     recsAgain.map((r) => r.seller.sellerId),
     recs.map((r) => r.seller.sellerId),

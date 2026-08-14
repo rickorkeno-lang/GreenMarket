@@ -27,6 +27,7 @@ import { MapBottomSheetContent } from '@/screens/map/MapBottomSheetContent';
 import { MapFabButton } from '@/screens/map/MapFabButton';
 import { MapSearchAutocomplete } from '@/screens/map/MapSearchAutocomplete';
 import { SellerFilter } from '@/screens/filter/SellerFilter';
+import { useTheme } from '@/design-system/useTheme';
 
 /** Зум при центрировании на конкретного продавца (поиск / выбор из списка). */
 const ZOOM_ON_SELLER = 15;
@@ -92,12 +93,26 @@ export function MapScreenView({
 }) {
   const { dispatch } = useGreenMarketRuntime();
   const mapState = useSyncExternalStore(MapRuntime.subscribe, MapRuntime.getState);
+  const theme = useTheme();
 
   const [centerRequestToken, setCenterRequestToken] = useState(0);
   // Токен «показать весь маршрут» (MAP-020): инкрементируется при появлении
   // нового построенного маршрута на карте — LeafletAdapter подгоняет камеру
   // под всю ломаную с запасом в один зум-уровень.
   const [fitRouteRequestToken, setFitRouteRequestToken] = useState(0);
+  // MAP-031: вход/выход из browser fullscreen меняет размер контейнера карты —
+  // LeafletAdapter по смене токена пересчитывает геометрию (map.invalidateSize).
+  // Токен инкрементируется при каждом фактическом fullscreenchange (isFullscreen
+  // синхронизирован с браузером через fullscreenchange в useMapFullscreen);
+  // Leaflet при этом остаётся изолирован — сигнал доходит только через MapAdapter
+  // (IMP-003.1 §3), как centerRequestToken/fitRouteRequestToken.
+  const [sizeChangeToken, setSizeChangeToken] = useState(0);
+  const isFullscreenRef = useRef(isFullscreen);
+  useEffect(() => {
+    if (isFullscreenRef.current === isFullscreen) return;
+    isFullscreenRef.current = isFullscreen;
+    setSizeChangeToken((token) => token + 1);
+  }, [isFullscreen]);
   // Тексты полей ввода инициализируются из сохранённого сеанса (MapSessionStore
   // всегда читает localStorage напрямую — getItem дешёв; и runtime при создании,
   // и экран здесь читают одну и ту же текущую запись), чтобы при возврате на
@@ -130,12 +145,30 @@ export function MapScreenView({
     locationNoticeTimerRef.current = window.setTimeout(() => setLocationNotice(null), 4000);
   }, []);
 
+  // Гео-трекинг («при включённой гео»): после первого успешного определения
+  // позиция запрашивается каждые 3 с (GeoService#startTracking) и обновляется
+  // на сайте через SET_USER_LOCATION — маркер пользователя и расстояния следуют
+  // за реальным положением. Запускается один раз за монтирование экрана
+  // (guard) и останавливается при размонтировании.
+  const geoTrackingStartedRef = useRef(false);
+  const geoTrackingMountedRef = useRef(true);
+
+  const startGeoTracking = useCallback(() => {
+    if (geoTrackingStartedRef.current) return;
+    geoTrackingStartedRef.current = true;
+    GeoService.startTracking(
+      (location) => MapRuntime.dispatch({ type: 'SET_USER_LOCATION', location }),
+      (kind) => showLocationNotice(kind),
+    );
+  }, [showLocationNotice]);
+
   /** Геолокация с общей обработкой ошибок для кнопки «Моё местоположение» и
    *  выбора точки «Моё местоположение» в мастере «Поиск продавцов». Сам поток
    *  (проверка разрешения, вызов navigator.geolocation, обработка ошибок) — в
    *  GeoService#resolveUserLocation; здесь только сопоставление результата со
    *  snackbar. Возвращает координаты либо null (пользователь уже получил
-   *  snackbar, положение карты не меняется). */
+   *  snackbar, положение карты не меняется). После успеха запускается
+   *  периодический трекинг позиции (если ещё не запущен). */
   const resolveLocationOrNotify = useCallback(async (): Promise<GeoPoint | null> => {
     if (geolocationPendingRef.current) return null;
     geolocationPendingRef.current = true;
@@ -145,11 +178,12 @@ export function MapScreenView({
         showLocationNotice(resolution.status === 'no-permission' ? 'no-permission' : 'unavailable');
         return null;
       }
+      startGeoTracking();
       return resolution.location;
     } finally {
       geolocationPendingRef.current = false;
     }
-  }, [showLocationNotice]);
+  }, [showLocationNotice, startGeoTracking]);
 
   useEffect(() => {
     dispatch({ type: 'MAP_LOADED' });
@@ -158,6 +192,25 @@ export function MapScreenView({
     // границами (а не приближением через радиус, IMP-003.1.2 §3).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- один раз при монтировании экрана
   }, []);
+
+  // «Кружок позиции появляется сразу, если позиция включена»: при открытии
+  // карты проверяем разрешение на геолокацию — если уже granted, запускаем
+  // периодический трекинг немедленно (без нажатия «Моё местоположение»): первый
+  // фикс ставит userLocation → маркер появляется, дальше трекинг обновляет его
+  // каждые 3 с. Если permission = "prompt"/"denied"/недоступен — не трогаем
+  // (промпт вызывается только явным действием пользователя). Трекинг
+  // останавливается при размонтировании экрана.
+  useEffect(() => {
+    geoTrackingMountedRef.current = true;
+    void GeoService.getPermissionState().then((permission) => {
+      if (!geoTrackingMountedRef.current) return;
+      if (permission === 'granted') startGeoTracking();
+    });
+    return () => {
+      geoTrackingMountedRef.current = false;
+      GeoService.stopTracking();
+    };
+  }, [startGeoTracking]);
 
   // Подгонка камеры под весь маршрут (MAP-020): при переходе route → success
   // (включая первичное монтирование карты, когда маршрут уже построен на
@@ -673,6 +726,7 @@ export function MapScreenView({
             onMapBackgroundClick={handleUnselect}
             centerRequestToken={centerRequestToken}
             fitRouteRequestToken={fitRouteRequestToken}
+            sizeChangeToken={sizeChangeToken}
           />
         </div>
 
@@ -699,6 +753,18 @@ export function MapScreenView({
               testId="toggle-fullscreen"
             />
           )}
+          <MapFabButton
+            label={theme.mode === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+            icon={theme.mode === 'dark' ? '☀️' : '🌙'}
+            onClick={theme.toggleMode}
+            testId="toggle-theme"
+          />
+          <MapFabButton
+            label={theme.contrast ? 'Обычный контраст' : 'Контрастная тема'}
+            icon={theme.contrast ? '◑' : '◐'}
+            onClick={theme.toggleContrast}
+            testId="toggle-contrast"
+          />
         </div>
 
         {/* «Убрать маршрут» (MAP-020): левый нижний угол, зеркально панели FAB

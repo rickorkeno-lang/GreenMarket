@@ -5,6 +5,10 @@ import * as scales from '@/design-system/tokens/scales';
 
 export interface ThemeContextValue {
   mode: ThemeMode;
+  /** Контрастная тема (усиленный контраст текста/бордеров). Реализован как
+   *  CSS-оверрайды токенов под [data-contrast='true'] (см. tokens.css), т.к.
+   *  все компоненты потребляют цвета через CSS-переменные, а не через JS. */
+  contrast: boolean;
   colors: ColorTokens;
   typeScale: typeof typeScale;
   spacing: typeof scales.spacing;
@@ -15,15 +19,21 @@ export interface ThemeContextValue {
   breakpoints: typeof scales.breakpoints;
   setMode: (mode: ThemeMode) => void;
   toggleMode: () => void;
+  setContrast: (contrast: boolean) => void;
+  toggleContrast: () => void;
 }
 
 export function buildThemeValue(
   mode: ThemeMode,
+  contrast: boolean,
   setMode: (mode: ThemeMode) => void,
   toggleMode: () => void,
+  setContrast: (contrast: boolean) => void,
+  toggleContrast: () => void,
 ): ThemeContextValue {
   return {
     mode,
+    contrast,
     colors: colorTokensByMode[mode],
     typeScale,
     spacing: scales.spacing,
@@ -34,9 +44,11 @@ export function buildThemeValue(
     breakpoints: scales.breakpoints,
     setMode,
     toggleMode,
+    setContrast,
+    toggleContrast,
   };
 }
 
 export const ThemeContext = createContext<ThemeContextValue>(
-  buildThemeValue('light', () => undefined, () => undefined),
+  buildThemeValue('light', false, () => undefined, () => undefined, () => undefined, () => undefined),
 );

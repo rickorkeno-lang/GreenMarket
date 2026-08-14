@@ -27,6 +27,24 @@ export type UserLocationResolution =
   | { status: "no-permission" }
   | { status: "unavailable" };
 
+/** Период обновления позиции при включённой геолокации (см. startTracking):
+ *  каждые 3 секунды запрашивается текущее местоположение и позиция
+ *  обновляется на сайте (маркер пользователя, расстояния). */
+export const LOCATION_TRACKING_INTERVAL_MS = 3000;
+
+/** Состояние периодического трекинга позиции (startTracking/stopTracking).
+ *  Единственный таймер всего приложения, работающий с navigator.geolocation. */
+let locationTrackingTimer: number | null = null;
+let locationTrackingListener: ((location: GeoPoint) => void) | null = null;
+let locationTrackingOnError: ((kind: "no-permission" | "unavailable") => void) | null = null;
+
+function clearLocationTrackingTimer(): void {
+  if (locationTrackingTimer !== null) {
+    window.clearTimeout(locationTrackingTimer);
+    locationTrackingTimer = null;
+  }
+}
+
 export const GeoService = {
   /** Haversine — расстояние по большому кругу между двумя точками WGS84. */
   distanceMeters(a: GeoPoint, b: GeoPoint): number {
@@ -65,8 +83,11 @@ export const GeoService = {
   },
 
   /** Текущее местоположение пользователя. Единственное место в приложении,
-   *  вызывающее navigator.geolocation — экран Map об этом API не знает. */
-  getCurrentLocation(): Promise<GeoPoint> {
+   *  вызывающее navigator.geolocation — экран Map об этом API не знает.
+   *  maximumAgeMs — допустимый возраст кэша позиции: разовый запрос допускает
+   *  кэш (30 с), периодический трекинг — нет (0, только свежий фикс, см.
+   *  startTracking). */
+  getCurrentLocation(maximumAgeMs = 30_000): Promise<GeoPoint> {
     return new Promise((resolve, reject) => {
       if (typeof navigator === "undefined" || !navigator.geolocation) {
         reject(new Error("Геолокация недоступна в этом окружении"));
@@ -75,7 +96,7 @@ export const GeoService = {
       navigator.geolocation.getCurrentPosition(
         (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
         (error) => reject(error),
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30_000 },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: maximumAgeMs },
       );
     });
   },
@@ -92,6 +113,50 @@ export const GeoService = {
         return { status: "unavailable" };
       }
     })();
+  },
+
+  /** Запускает периодическое отслеживание позиции («при включённой гео»):
+   *  пока идёт, каждые LOCATION_TRACKING_INTERVAL_MS запрашивается текущее
+   *  местоположение (maximumAge 0 — только свежий фикс) и результат отдаётся
+   *  в onLocation, чтобы экран обновил позицию на сайте (маркер пользователя,
+   *  расстояния). Очередной запрос стартует через 3 с ПОСЛЕ завершения
+   *  предыдущего — запросы не пересекаются. Сбой отдельного тика тихо
+   *  пропускается (временная потеря сигнала не останавливает трекинг); если
+   *  доступ отозван (denied) — трекинг останавливается и вызывается
+   *  onError("no-permission"). Повторный вызов сбрасывает предыдущий цикл.
+   *  Остановка — GeoService#stopTracking (экран зовёт её при размонтировании). */
+  startTracking(
+    onLocation: (location: GeoPoint) => void,
+    onError?: (kind: "no-permission" | "unavailable") => void,
+  ): void {
+    this.stopTracking();
+    locationTrackingListener = onLocation;
+    locationTrackingOnError = onError ?? null;
+    const tick = async (): Promise<void> => {
+      if (!locationTrackingListener) return;
+      try {
+        const location = await this.getCurrentLocation(0);
+        if (!locationTrackingListener) return;
+        locationTrackingListener(location);
+      } catch {
+        const permission = await this.getPermissionState();
+        if (!locationTrackingListener) return;
+        if (permission === "denied") {
+          locationTrackingOnError?.("no-permission");
+          this.stopTracking();
+          return;
+        }
+      }
+      locationTrackingTimer = window.setTimeout(tick, LOCATION_TRACKING_INTERVAL_MS);
+    };
+    void tick();
+  },
+
+  /** Останавливает периодическое отслеживание позиции (если оно шло). */
+  stopTracking(): void {
+    clearLocationTrackingTimer();
+    locationTrackingListener = null;
+    locationTrackingOnError = null;
   },
 
   /** Геокодирование адреса через Nominatim. Сетевой вызов — при недоступности
