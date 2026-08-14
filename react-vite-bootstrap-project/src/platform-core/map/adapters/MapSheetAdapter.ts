@@ -30,13 +30,16 @@ import { sellerStatus } from "@/platform-core/formatting/SellerStatus";
 const SELLER_ICON = "🏪";
 
 /** Строка списка: иконка + название + расстояние и статус. Действие —
- *  открыть карточку продавца (SELECT_SELLER), как при выборе маркера. */
+ *  открыть карточку продавца (SELECT_SELLER), как при выборе маркера.
+ *  Расстояние может отсутствовать (замечание №2) — тогда строка показывает
+ *  только статус. */
 function sellerRow(seller: SellerMapRecord): RowItem {
+  const distance = seller.distanceMeters != null ? DistanceFormatter.format({ meters: seller.distanceMeters }) : null;
   return {
     id: `seller-${seller.sellerId}`,
     avatar: SELLER_ICON,
     title: seller.name,
-    subtitle: `${DistanceFormatter.format({ meters: seller.distanceMeters })} · ${sellerStatus(seller).text}`,
+    subtitle: [distance, sellerStatus(seller).text].filter(Boolean).join(" · "),
     action: { type: "SELECT_SELLER", payload: { sellerId: seller.sellerId } },
   };
 }
@@ -111,22 +114,31 @@ function searchResultsBlocks(search: SellerSearchState): ContentBlock[] {
 }
 
 function sellerSummaryBlocks(seller: SellerMapRecord): ContentBlock[] {
+  // Рейтинг/расстояние — опциональные данные (замечание №2): мета-строка
+  // собирается только из имеющихся частей.
+  const meta = [
+    seller.rating != null ? RatingFormatter.format({ value: seller.rating }) : null,
+    seller.distanceMeters != null ? DistanceFormatter.format({ meters: seller.distanceMeters }) : null,
+  ]
+    .filter((text): text is string => text !== null)
+    .join(" · ");
+  // Недоступный продавец: вместо графика работы — «Недоступен» с красным
+  // кружком (как в списке продавцов); расписание не показываем вовсе.
+  // Неизвестная доступность — честное «Статус не указан» вместо ложного
+  // «Недоступен» (отсутствие данных ≠ недоступность).
+  const availabilityBlocks: ContentBlock[] = (() => {
+    if (seller.isAvailable == null) return [{ type: "text", text: "Статус не указан" }];
+    if (!seller.isAvailable) return [{ type: "text", text: "🔴 Недоступен" }];
+    const blocks: ContentBlock[] = [{ type: "text", text: seller.isOpenNow ? "🟢 Открыт" : "🔴 Закрыт" }];
+    if (seller.workingHoursLabel) blocks.push({ type: "text", text: seller.workingHoursLabel });
+    return blocks;
+  })();
   return [
     { type: "hero" },
     { type: "sectionLabel", text: seller.name },
-    {
-      type: "metaLine",
-      text: `${RatingFormatter.format({ value: seller.rating })} · ${DistanceFormatter.format({ meters: seller.distanceMeters })}`,
-    },
+    ...(meta ? ([{ type: "metaLine", text: meta }] as const) : []),
     { type: "text", text: seller.categoryNames.join(" · ") },
-    // Недоступный продавец: вместо графика работы — «Недоступен» с красным
-    // кружком (как в списке продавцов); расписание не показываем вовсе.
-    ...(seller.isAvailable
-      ? ([
-          { type: "text", text: seller.isOpenNow ? "🟢 Открыт" : "🔴 Закрыт" },
-          { type: "text", text: seller.workingHoursLabel },
-        ] as const)
-      : ([{ type: "text", text: "🔴 Недоступен" }] as const)),
+    ...availabilityBlocks,
     {
       type: "cardList",
       items: [

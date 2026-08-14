@@ -151,9 +151,12 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
    *  маршрута. */
   const handleStartRoute = useCallback(() => {
     if (!sellerId) return;
+    // Замечание №2: у продавца может не быть координат — маршрут не построить,
+    // поэтому кнопку не диспатчим (MapProjection тоже бы отбросил такой вызов).
+    if (!record?.location) return;
     Diagnostics.track('seller_card.start_route', { sellerId });
     dispatch({ type: 'START_ROUTE', payload: { sellerId } });
-  }, [dispatch, sellerId]);
+  }, [dispatch, sellerId, record]);
 
   const handleOpenRecommendation = useCallback(
     (recommendation: RecommendedSeller) => {

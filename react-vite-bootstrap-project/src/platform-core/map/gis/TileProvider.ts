@@ -20,3 +20,14 @@ export const OpenStreetMapTileProvider: TileProviderConfig = {
   minZoom: 3,
   crossOrigin: true,
 };
+
+/** Провайдер "чистой карты" (MAP-027). Использует CartoDB Voyager.
+ *  Отображает дороги, дома и природные зоны, но убирает большинство мелких POI
+ *  (магазинов, ресторанов и т.д.), уменьшая визуальный шум. */
+export const CleanMapTileProvider: TileProviderConfig = {
+  urlTemplate: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  maxZoom: 19,
+  minZoom: 3,
+  crossOrigin: true,
+};

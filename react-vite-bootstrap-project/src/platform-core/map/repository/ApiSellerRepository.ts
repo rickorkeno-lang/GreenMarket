@@ -10,20 +10,11 @@ import type {
   CategoryOption,
   SellerProductRecord,
   SellerRepository,
-  SellerSearchRequest,
 } from '@/platform-core/map/repository/SellerRepository';
 import type { SellerCardViewModel } from '@/platform-core/viewmodels/SellerCardViewModel';
 import type { RecommendedSeller } from '@/platform-core/map/recommendations/SellerRecommendations';
 import type { ProductNameSuggestion, ProductSearchResult } from '@/platform-core/map/product-search/ProductSearch';
-import { GeoService } from '@/platform-core/map/gis/GeoService';
-import { defaultMapConfig } from '@/platform-core/map/gis/MapConfig';
-import { DistanceFormatter } from '@/platform-core/formatting/DistanceFormatter';
-import { MockSellerRepository } from '@/platform-core/map/repository/MockSellerRepository';
 
-// import.meta.env — Vite-специфика. Под tsx (юнит-тесты MapRuntime, где
-// модуль загружается вне Vite) env отсутствует — тогда фолбэк на дефолтный
-// путь, как если бы VITE_API_BASE не задан вовсе. В приложении путь
-// конфигурируется через .env (см. README).
 const API_BASE = (import.meta.env?.VITE_API_BASE as string | undefined) ?? '/api/v1/catalog';
 
 interface BackendMarket {
@@ -73,17 +64,11 @@ interface BackendSellerDetail {
   whatsapp: string | null;
 }
 
-function parseSellerNumericId(id: SellerId | string): number | null {
+function parseSellerNumericId(id: SellerId | string): number {
   const str = String(id).replace(/^(seller-)+/, '');
   const num = Number(str);
-  return Number.isNaN(num) ? null : num;
-}
-
-/** Поисковая нормализация — как в MockSellerRepository: регистр в нижний и
- *  «ё» → «е», чтобы запрос «мёд» находил «Медовый край», а «мед» — «Мёд и
- *  сладости» (и наоборот). Единое поведение поиска у обеих реализаций. */
-function normalizeForSearch(value: string): string {
-  return value.trim().toLowerCase().replace(/ё/g, "е");
+  if (Number.isNaN(num)) throw new Error(`Invalid API numeric SellerId: ${id}`);
+  return num;
 }
 
 function isWithinBounds(point: GeoPoint, bounds: MapBounds): boolean {
@@ -95,14 +80,16 @@ function isWithinBounds(point: GeoPoint, bounds: MapBounds): boolean {
   );
 }
 
-/** Точки торговли в границах карты (API `/markets`). Доменные записи
- *  MapViewModel (marketId — brand «market-N»): источник пинов карты
- *  (MapRuntime.requestVisibleMarkets). При сбое/пустом ответе — пустой
- *  список (карта просто не рисует пины). */
-async function fetchVisibleMarkets(bounds: MapBounds): Promise<MarketMapRecord[]> {
-  try {
+/**
+ * ЧИСТЫЙ API-РЕПОЗИТОРИЙ.
+ * Отвечает ТОЛЬКО за сетевые вызовы. Никаких скрытых fallback-моков внутри.
+ * Ошибка сети = выброшенное исключение (которое честно долетит до UI как failed state).
+ * Отсутствие данных = честный [].
+ */
+export const ApiSellerRepository: SellerRepository = {
+  async getVisibleMarkets(bounds: MapBounds): Promise<MarketMapRecord[]> {
     const res = await fetch(`${API_BASE}/markets`);
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
     const data = (await res.json()) as BackendMarketsResponse;
 
     return (data.markets || [])
@@ -120,18 +107,12 @@ async function fetchVisibleMarkets(bounds: MapBounds): Promise<MarketMapRecord[]
         };
       })
       .filter((m) => isWithinBounds(m.location, bounds));
-  } catch {
-    return [];
-  }
-}
+  },
 
-/** Продавцы конкретной точки (API `/markets/{id}/sellers`): краткие записи
- *  списка точки. При сбое — пустой список. */
-async function fetchMarketSellers(marketId: MarketId): Promise<MarketSellerRecord[]> {
-  try {
+  async getMarketSellers(marketId: MarketId): Promise<MarketSellerRecord[]> {
     const cleanId = marketId.replace(/^market-/, '');
     const res = await fetch(`${API_BASE}/markets/${cleanId}/sellers`);
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
     const data = (await res.json()) as BackendMarketSellersResponse;
 
     return (data.sellers || []).map((s): MarketSellerRecord => ({
@@ -143,159 +124,87 @@ async function fetchMarketSellers(marketId: MarketId): Promise<MarketSellerRecor
       shortDescription: s.short_description,
       productCount: s.product_count,
     }));
-  } catch {
-    return [];
-  }
-}
+  },
 
-export const ApiSellerRepository: SellerRepository = {
   async getSeller(id: SellerId): Promise<SellerMapRecord | null> {
     const numericId = parseSellerNumericId(id);
-    if (!numericId) return MockSellerRepository.getSeller(id);
+    const res = await fetch(`${API_BASE}/sellers/${numericId}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+    const seller = (await res.json()) as BackendSellerDetail;
 
-    try {
-      const res = await fetch(`${API_BASE}/sellers/${numericId}`);
-      if (!res.ok) return MockSellerRepository.getSeller(id);
-      const seller = (await res.json()) as BackendSellerDetail;
+    const location = seller.market?.latitude != null && seller.market?.longitude != null
+      ? { lat: Number(seller.market.latitude), lng: Number(seller.market.longitude) }
+      : null;
 
-      const lat = seller.market?.latitude ? Number(seller.market.latitude) : defaultMapConfig.defaultCenter.lat;
-      const lng = seller.market?.longitude ? Number(seller.market.longitude) : defaultMapConfig.defaultCenter.lng;
-      const location = { lat, lng };
-
-      return {
-        sellerId: asSellerId(`seller-${seller.seller_id}`),
-        name: seller.name,
-        location,
-        rating: 4.8,
-        distanceMeters: Math.round(GeoService.distanceMeters(defaultMapConfig.defaultCenter, location)),
-        categories: [],
-        categoryNames: [],
-        photoUrl: null,
-        isOpenNow: true,
-        workingHoursLabel: seller.working_hours ?? 'Открыто',
-        isAvailable: true,
-      };
-    } catch {
-      return MockSellerRepository.getSeller(id);
-    }
-  },
-
-  /** Каталог продавцов — тестовые «шопы» из мока (немецкая территория).
-   *  Точки торговли-маркеты приходят с бэкенда (getVisibleMarkets), а лавки
-   *  каталога остаются в моке: иначе демо теряет обычные шопы, и пин маркета
-   *  в Казани накрывается точкой его продавца (см. задачу «Маркеты»: пин —
-   *  одно место, продавцы — в попапе). */
-  getAllSellers(): Promise<SellerMapRecord[]> {
-    return MockSellerRepository.getAllSellers();
-  },
-
-  async getVisibleSellers(bounds: MapBounds): Promise<SellerMapRecord[]> {
-    const all = await this.getAllSellers();
-    return all.filter((s) => isWithinBounds(s.location, bounds));
-  },
-
-  getVisibleMarkets(bounds: MapBounds): Promise<MarketMapRecord[]> {
-    return fetchVisibleMarkets(bounds);
-  },
-
-  getMarketSellers(marketId: MarketId): Promise<MarketSellerRecord[]> {
-    return fetchMarketSellers(marketId);
-  },
-
-  async searchSellersNear(request: SellerSearchRequest): Promise<SellerMapRecord[]> {
-    const all = await this.getAllSellers();
-    return all
-      .filter((s) => GeoService.distanceMeters(request.origin, s.location) <= request.radiusMeters)
-      .map((s) => ({ ...s, distanceMeters: Math.round(GeoService.distanceMeters(request.origin, s.location)) }))
-      .sort((a, b) => a.distanceMeters - b.distanceMeters);
-  },
-
-  async searchSellers(query: string): Promise<SellerMapRecord[]> {
-    const q = normalizeForSearch(query);
-    if (!q) return [];
-    const all = await this.getAllSellers();
-    return all.filter((s) => normalizeForSearch(s.name).includes(q));
-  },
-
-  async findSeller(query: string): Promise<SellerMapRecord | null> {
-    const matches = await this.searchSellers(query);
-    return matches[0] ?? null;
-  },
-
-  getCategories(): Promise<CategoryOption[]> {
-    return MockSellerRepository.getCategories();
+    // Замечание №2: запись честно отражает профиль бэкенда — поля, которых там
+    // нет (рейтинг, часы открытия, доступность, координаты), отсутствуют и в
+    // записи: location = null, остальное — undefined (без выдуманных значений).
+    return {
+      sellerId: asSellerId(`seller-${seller.seller_id}`),
+      name: seller.name,
+      location,
+      categories: [],
+      categoryNames: [],
+      photoUrl: null,
+      workingHoursLabel: seller.working_hours ?? undefined,
+    };
   },
 
   async getSellerCard(id: SellerId): Promise<SellerCardViewModel> {
     const numericId = parseSellerNumericId(id);
-    if (!numericId) return MockSellerRepository.getSellerCard(id);
+    const res = await fetch(`${API_BASE}/sellers/${numericId}`);
+    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+    const seller = (await res.json()) as BackendSellerDetail;
 
-    try {
-      const res = await fetch(`${API_BASE}/sellers/${numericId}`);
-      if (!res.ok) return MockSellerRepository.getSellerCard(id);
-      const seller = (await res.json()) as BackendSellerDetail;
-
-      const products = await this.getSellerProducts(id);
-
-      return {
-        loadState: 'ready',
-        seller: {
-          id: asSellerId(`seller-${seller.seller_id}`),
-          name: seller.name,
-          rating: 4.8,
-          distance: seller.market ? DistanceFormatter.format({ meters: 1500 }) : '—',
+    // Скелет карточки. Так как API товаров ещё не реализовано,
+    // товары сюда инжектирует точка композиции (repository.ts).
+    // Рейтинг/расстояние/доверие бэкенд не отдаёт — поля честно отсутствуют
+    // (замечание №2), а не заполняются вымышленными значениями.
+    return {
+      loadState: 'ready',
+      seller: {
+        id: asSellerId(`seller-${seller.seller_id}`),
+        name: seller.name,
+      },
+      coverage: { have: 0, total: 0, fullyCovered: true },
+      importantAlerts: [],
+      basketProducts: [],
+      otherProducts: [],
+      dataMayBeStale: false,
+      photos: [],
+      availableActions: [
+        {
+          id: 'start-route',
+          action: { type: 'START_ROUTE', payload: { sellerId: id } },
+          label: 'Начать маршрут',
+          icon: 'navigation',
+          variant: 'primary',
         },
-        coverage: {
-          have: products.length,
-          total: products.length,
-          fullyCovered: true,
+        {
+          id: 'favorite',
+          action: { type: 'TOGGLE_FAVORITE_SELLER', payload: { sellerId: id } },
+          label: 'В избранное',
+          icon: 'heart',
+          variant: 'secondary',
         },
-        importantAlerts: [],
-        basketProducts: products.slice(0, 4),
-        otherProducts: products.slice(4),
-        trustInfo: 'Продавец проверен площадкой',
-        trustLevel: 'high',
-        lastConfirmedAt: 'сегодня',
-        dataMayBeStale: false,
-        photos: [],
-        availableActions: [
-          {
-            id: 'start-route',
-            action: { type: 'START_ROUTE', payload: { sellerId: id } },
-            label: 'Начать маршрут',
-            icon: 'navigation',
-            variant: 'primary',
-          },
-          {
-            id: 'favorite',
-            action: { type: 'TOGGLE_FAVORITE_SELLER', payload: { sellerId: id } },
-            label: 'В избранное',
-            icon: 'heart',
-            variant: 'secondary',
-          },
-        ],
-        reports: [],
-        isFavorite: false,
-        otherProductsExpanded: false,
-      };
-    } catch {
-      return MockSellerRepository.getSellerCard(id);
-    }
+      ],
+      reports: [],
+      isFavorite: false,
+      otherProductsExpanded: false,
+    };
   },
 
-  async getSellerProducts(id: SellerId): Promise<SellerProductRecord[]> {
-    return MockSellerRepository.getSellerProducts(id);
-  },
-
-  async getRecommendedSellers(id: SellerId): Promise<RecommendedSeller[]> {
-    return MockSellerRepository.getRecommendedSellers(id);
-  },
-
-  async searchProductNames(query: string): Promise<ProductNameSuggestion[]> {
-    return MockSellerRepository.searchProductNames(query);
-  },
-
-  async searchSellersByProduct(query: string): Promise<ProductSearchResult> {
-    return MockSellerRepository.searchSellersByProduct(query);
-  },
+  // Нижележащие методы НЕ поддерживаются бэкендом на текущем этапе. 
+  // ApiSellerRepository больше не подсовывает моки втихаря, а честно кидает ошибку.
+  async getAllSellers(): Promise<SellerMapRecord[]> { throw new Error('Not implemented in API'); },
+  async getVisibleSellers(): Promise<SellerMapRecord[]> { throw new Error('Not implemented in API'); },
+  async searchSellersNear(): Promise<SellerMapRecord[]> { throw new Error('Not implemented in API'); },
+  async searchSellers(): Promise<SellerMapRecord[]> { throw new Error('Not implemented in API'); },
+  async findSeller(): Promise<SellerMapRecord | null> { throw new Error('Not implemented in API'); },
+  async getCategories(): Promise<CategoryOption[]> { throw new Error('Not implemented in API'); },
+  async getSellerProducts(): Promise<SellerProductRecord[]> { throw new Error('Not implemented in API'); },
+  async getRecommendedSellers(): Promise<RecommendedSeller[]> { throw new Error('Not implemented in API'); },
+  async searchProductNames(): Promise<ProductNameSuggestion[]> { throw new Error('Not implemented in API'); },
+  async searchSellersByProduct(): Promise<ProductSearchResult> { throw new Error('Not implemented in API'); },
 };

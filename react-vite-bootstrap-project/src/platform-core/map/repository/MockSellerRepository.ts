@@ -94,6 +94,15 @@ function buildSellers(): SellerMapRecord[] {
 
 const ALL_SELLERS = buildSellers();
 
+/** Есть ли продавец в демо-каталоге. Единственный источник правды для
+ *  маршрутизации (см. repository.ts): принадлежность к Mock-каталогу
+ *  определяется НАЛИЧИЕМ в нём продавца, а не формой ID — суффикс ID у
+ *  продавцов каталога числовой (seller-1..seller-24), как и у продавцов
+ *  рынка (seller-101..seller-145) и реальных продавцов бэкенда. */
+export function isMockSeller(id: SellerId | string): boolean {
+  return ALL_SELLERS.some((s) => s.sellerId === id);
+}
+
 /* ====== Точки торговли (задача «Маркеты») ======
  * Один рынок в Казани (как в БД бэкенда — GET /markets возвращает ту же
  * точку) с большим числом продавцов: каждый со своим рядом/местом, часами и
@@ -200,7 +209,9 @@ const PRODUCT_INDEX = buildProductIndex();
 /** Продавцы, у которых есть товар из записи индекса, по расстоянию (как в
  *  обычном поиске: «Сортировать продавцов в них как обычно»). */
 function matchesByDistance(entry: ProductIndexEntry): ProductSellerMatch[] {
-  return entry.matches.slice().sort((a, b) => a.seller.distanceMeters - b.seller.distanceMeters);
+  return entry.matches.slice().sort(
+    (a, b) => (a.seller.distanceMeters ?? 0) - (b.seller.distanceMeters ?? 0),
+  );
 }
 
 /** Реестр компараторов сортировки результатов поиска: ключ → компаратор по
@@ -209,7 +220,7 @@ function matchesByDistance(entry: ProductIndexEntry): ProductSellerMatch[] {
  *  поиска не меняются (MAP-053: «архитектура под будущие сортировки»). */
 const SELLER_SORTS: Record<SellerSortKey, (a: SellerMapRecord, b: SellerMapRecord) => number> = {
   // По расстоянию от точки поиска: distanceMeters уже пересчитан от origin.
-  distance: (a, b) => a.distanceMeters - b.distanceMeters,
+  distance: (a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0),
 };
 
 function isWithinBounds(point: GeoPoint, bounds: MapBounds): boolean {
@@ -266,7 +277,8 @@ export const MockSellerRepository: SellerRepository = {
   },
 
   getVisibleSellers(bounds) {
-    return delay(ALL_SELLERS.filter((s) => isWithinBounds(s.location, bounds)));
+    // location у продавцов каталога всегда есть; nullable-тип обрабатываем явно.
+    return delay(ALL_SELLERS.filter((s) => s.location !== null && isWithinBounds(s.location, bounds)));
   },
 
   getVisibleMarkets(bounds) {
@@ -284,7 +296,10 @@ export const MockSellerRepository: SellerRepository = {
 
   searchSellersNear({ origin, radiusMeters, sort }: SellerSearchRequest) {
     return delay(
-      ALL_SELLERS.filter((s) => GeoService.distanceMeters(origin, s.location) <= radiusMeters)
+      ALL_SELLERS.filter(
+        (s): s is SellerMapRecord & { location: GeoPoint } =>
+          s.location !== null && GeoService.distanceMeters(origin, s.location) <= radiusMeters,
+      )
         // Записи хранят distanceMeters от центра тестовой территории — здесь
         // пересчитываем их от реальной точки поиска, чтобы результаты показывали
         // честное расстояние (и компаратор «по расстоянию» работал верно).
@@ -343,7 +358,8 @@ export const MockSellerRepository: SellerRepository = {
         id: record.sellerId,
         name: record.name,
         rating: record.rating,
-        distance: DistanceFormatter.format({ meters: record.distanceMeters }),
+        // У продавцов каталога distanceMeters всегда есть (buildSellers).
+        distance: DistanceFormatter.format({ meters: record.distanceMeters! }),
       },
       coverage: {
         have,

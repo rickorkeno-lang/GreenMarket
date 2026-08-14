@@ -161,6 +161,8 @@ export interface MapRuntimeState {
   /** Название района/населённого пункта текущего просмотра (GM-UX-001
    *  "Область текущего района"); null — район не определён. */
   currentAreaLabel: string | null;
+  /** Флаг скрытия встроенных точек (POI) на карте (MAP-027) */
+  hideMapPois: boolean;
 }
 
 export type MapRuntimeAction =
@@ -291,7 +293,8 @@ export type MapRuntimeAction =
   /* Универсальная смена фильтра: выбранные опции одной группы (например
    * "category" → [categoryId], "state" → ["open", "available"]). visibleSellers
    * пересчитывается локально из loadedSellers — Repository не дёргается. */
-  | { type: "SET_FILTER_OPTIONS"; groupId: string; optionIds: string[] };
+  | { type: "SET_FILTER_OPTIONS"; groupId: string; optionIds: string[] }
+  | { type: "TOGGLE_MAP_POIS" };
 
 /** Тексты полей ввода, которыми MapScreenView дополняет доменный снапшот при
  *  сохранении сеанса (MapRuntime#toSessionSnapshot). По конвенции экрана
@@ -340,6 +343,7 @@ function withRestoredSession(base: MapRuntimeState): MapRuntimeState {
       originLabel: session.sellerSearch.originLabel,
       radiusMeters: session.sellerSearch.radiusMeters,
     },
+    hideMapPois: session.hideMapPois ?? base.hideMapPois,
   };
 }
 
@@ -391,6 +395,7 @@ const initialState: MapRuntimeState = {
   loading: false,
   error: false,
   currentAreaLabel: null,
+  hideMapPois: false,
 };
 
 /** Поиск данных продавца по всем источникам карточки Bottom Sheet: видимая
@@ -621,11 +626,11 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
       return state.marketSellersMarketId !== action.marketId
         ? state
         : {
-            ...state,
-            marketSellers: action.sellers,
-            marketSellersLoading: false,
-            marketSellersFailed: false,
-          };
+          ...state,
+          marketSellers: action.sellers,
+          marketSellersLoading: false,
+          marketSellersFailed: false,
+        };
     case "MARKET_SELLERS_FAILED":
       return state.marketSellersMarketId !== action.marketId
         ? state
@@ -848,6 +853,8 @@ function reducer(state: MapRuntimeState, action: MapRuntimeAction): MapRuntimeSt
       return { ...state, productSearch: { ...state.productSearch, query: "", loading: false, phase: "names", nameSuggestions: [], sellers: [], suggestedProduct: null, failed: false } };
     case "AREA_LABEL_UPDATED":
       return { ...state, currentAreaLabel: action.label };
+    case "TOGGLE_MAP_POIS":
+      return { ...state, hideMapPois: !state.hideMapPois };
     default:
       return state;
   }
@@ -968,6 +975,9 @@ function diagnosticsFor(action: MapRuntimeAction, nextState: MapRuntimeState): v
       return;
     case "SET_FILTER_OPTIONS":
       Diagnostics.track("map.filter_changed", { groupId: action.groupId, selectedCount: action.optionIds.length });
+      return;
+    case "TOGGLE_MAP_POIS":
+      Diagnostics.track("map.pois_toggled", { hidden: nextState.hideMapPois });
       return;
     default:
       return;
@@ -1433,7 +1443,13 @@ function createMapRuntime() {
         radiusMeters: s.sellerSearch.radiusMeters,
       },
       bottomSheet,
+      hideMapPois: s.hideMapPois,
     };
+  }
+
+  /** Переключение видимости встроенных POI на базовой карте (MAP-027). */
+  function toggleMapPois(): void {
+    dispatch({ type: "TOGGLE_MAP_POIS" });
   }
 
   // При восстановлении открытой карточки продавца (sellerSummary) мгновенно
@@ -1472,6 +1488,7 @@ function createMapRuntime() {
     loadMarketSellers,
     retryMarketSellers,
     toSessionSnapshot,
+    toggleMapPois,
   };
 }
 

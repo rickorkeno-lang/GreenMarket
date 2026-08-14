@@ -43,6 +43,7 @@ function rawSnapshot(overrides: Record<string, unknown> = {}): Record<string, un
       radiusMeters: 2500,
     },
     bottomSheet: null,
+    hideMapPois: false,
     ...overrides,
   };
 }
@@ -59,6 +60,7 @@ function validSnapshot(): MapSessionSnapshot {
       radiusMeters: 2500,
     },
     bottomSheet: null,
+    hideMapPois: false,
   };
 }
 

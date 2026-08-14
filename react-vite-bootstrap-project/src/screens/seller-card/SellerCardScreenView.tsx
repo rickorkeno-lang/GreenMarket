@@ -134,8 +134,14 @@ export function SellerCardScreenView({ sellerId }: { sellerId: SellerId }) {
                       <Stack gap="xs">
                         <Text variant="bodyStrong">{vm.record.name}</Text>
                         <Text variant="caption" tone="secondary">
-                          {RatingFormatter.format({ value: vm.record.rating })} ·{' '}
-                          {DistanceFormatter.format({ meters: vm.record.distanceMeters })}
+                          {[
+                            vm.record.rating != null ? RatingFormatter.format({ value: vm.record.rating }) : null,
+                            vm.record.distanceMeters != null
+                              ? DistanceFormatter.format({ meters: vm.record.distanceMeters })
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
                         </Text>
                       </Stack>
                     </Row>
@@ -153,7 +159,7 @@ export function SellerCardScreenView({ sellerId }: { sellerId: SellerId }) {
                       </Badge>
                     ))}
                   </Row>
-                  {vm.record.isAvailable && (
+                  {vm.record.isAvailable && vm.record.workingHoursLabel && (
                     <Text variant="caption" tone="secondary">
                       {vm.record.workingHoursLabel}
                     </Text>

@@ -9,7 +9,10 @@ export interface SellerStatusPresentation {
 }
 
 export function sellerStatus(record: SellerMapRecord): SellerStatusPresentation {
-  if (!record.isAvailable) return { text: 'Недоступен', tone: 'danger' };
-  if (record.isOpenNow) return { text: 'Открыт сейчас', tone: 'success' };
-  return { text: 'Сейчас закрыт', tone: 'neutral' };
+  // Замечание №2: если бэкенд не отдал статус доступности — честно «не указан»,
+  // а не ложное «Недоступен» (отсутствие данных ≠ недоступность).
+  if (record.isAvailable == null) return { text: "Статус не указан", tone: "neutral" };
+  if (!record.isAvailable) return { text: "Недоступен", tone: "danger" };
+  if (record.isOpenNow) return { text: "Открыт сейчас", tone: "success" };
+  return { text: "Сейчас закрыт", tone: "neutral" };
 }

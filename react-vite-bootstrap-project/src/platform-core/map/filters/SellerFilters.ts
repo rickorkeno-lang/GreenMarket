@@ -54,9 +54,9 @@ export function buildSellerFilters(categories: CategoryOption[]): SellerFilterGr
         {
           id: "open",
           label: "Только открытые",
-          matches: (s) => s.isOpenNow && s.isAvailable,
+          matches: (s) => Boolean(s.isOpenNow && s.isAvailable),
         },
-        { id: "available", label: "Только доступные", matches: (s) => s.isAvailable },
+        { id: "available", label: "Только доступные", matches: (s) => Boolean(s.isAvailable) },
       ],
     },
   ];

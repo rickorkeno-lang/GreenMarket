@@ -39,10 +39,12 @@ export interface MapSessionSnapshot {
   };
   /** Открытая панель Bottom Sheet (null — панель закрыта). */
   bottomSheet:
-    | { type: "sellerSummary"; sellerId: SellerId; seller: SellerMapRecord | null }
-    | { type: "sellerSearchOrigin" }
-    | { type: "sellerSearchResults" }
-    | null;
+  | { type: "sellerSummary"; sellerId: SellerId; seller: SellerMapRecord | null }
+  | { type: "sellerSearchOrigin" }
+  | { type: "sellerSearchResults" }
+  | null;
+  /** MAP-027: Состояние переключателя скрытия POI (сохраняем выбор между сеансами). */
+  hideMapPois: boolean;
 }
 
 const STORAGE_KEY = "gm.map.session.v1";
@@ -176,6 +178,7 @@ export function normalizeSnapshot(raw: unknown): MapSessionSnapshot | null {
         : 5_000,
     },
     bottomSheet: normalizeBottomSheet(record.bottomSheet),
+    hideMapPois: typeof record.hideMapPois === "boolean" ? record.hideMapPois : false,
   };
 }
 

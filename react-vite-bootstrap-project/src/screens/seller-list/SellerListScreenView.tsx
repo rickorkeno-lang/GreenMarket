@@ -254,6 +254,7 @@ export function SellerListScreenView() {
    *  перехода, и карта появляется уже с выбранным продавцом. */
   const handleSelectSeller = useCallback(
     (seller: SellerMapRecord) => {
+      if (!seller.location) return;
       MapRuntime.dispatch({ type: 'MOVE_MAP', center: seller.location, zoom: ZOOM_ON_SELLER });
       MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: seller.sellerId });
       Diagnostics.track('seller_list.show_on_map', { sellerId: seller.sellerId });
@@ -454,9 +455,13 @@ export function SellerListScreenView() {
                 data-testid={`seller-list-row-${seller.sellerId}`}
                 trailing={
                   <Stack gap="xs" align="end">
-                    <Text variant="bodyStrong">{RatingFormatter.format({ value: seller.rating })}</Text>
+                    <Text variant="bodyStrong">
+                      {seller.rating != null ? RatingFormatter.format({ value: seller.rating }) : '—'}
+                    </Text>
                     <Text variant="caption" tone="secondary">
-                      {DistanceFormatter.format({ meters: seller.distanceMeters })}
+                      {seller.distanceMeters != null
+                        ? DistanceFormatter.format({ meters: seller.distanceMeters })
+                        : '—'}
                     </Text>
                   </Stack>
                 }
@@ -467,14 +472,16 @@ export function SellerListScreenView() {
                     {seller.categoryNames.join(' · ')}
                   </Text>
                   <Text variant="caption" tone="secondary">
-                    {seller.isAvailable ? (
-                      <>
-                        {seller.isOpenNow ? '🟢 ' : '🔴 '}
-                        {seller.workingHoursLabel}
-                      </>
-                    ) : (
-                      '🔴 Недоступен'
-                    )}
+                    {seller.isAvailable == null
+                      ? 'Статус не указан'
+                      : seller.isAvailable
+                        ? (
+                            <>
+                              {seller.isOpenNow ? '🟢 ' : '🔴 '}
+                              {seller.workingHoursLabel}
+                            </>
+                          )
+                        : '🔴 Недоступен'}
                   </Text>
                 </Stack>
               </ListItem>
@@ -515,14 +522,16 @@ function ProductMatchRow({
           {match.productName} · {match.seller.categoryNames.join(' · ')}
         </Text>
         <Text variant="caption" tone="secondary">
-          {match.seller.isAvailable ? (
-            <>
-              {match.seller.isOpenNow ? '🟢 ' : '🔴 '}
-              {match.seller.workingHoursLabel}
-            </>
-          ) : (
-            '🔴 Недоступен'
-          )}
+          {match.seller.isAvailable == null
+            ? 'Статус не указан'
+            : match.seller.isAvailable
+              ? (
+                  <>
+                    {match.seller.isOpenNow ? '🟢 ' : '🔴 '}
+                    {match.seller.workingHoursLabel}
+                  </>
+                )
+              : '🔴 Недоступен'}
         </Text>
       </Stack>
     </ListItem>

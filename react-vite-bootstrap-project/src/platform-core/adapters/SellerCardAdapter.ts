@@ -41,8 +41,15 @@ export const SellerCardAdapter = {
 
     if (vm.photos.length) blocks.push({ type: "photoStrip", items: vm.photos });
 
-    const trustLabel = { high: "Высокий уровень доверия", medium: "Средний уровень доверия", low: "Низкий уровень доверия" }[vm.trustLevel];
-    blocks.push({ type: "text", text: [vm.trustInfo, `${trustLabel} · подтверждено: ${vm.lastConfirmedAt}`].filter(Boolean).join(" — ") });
+    // Доверие — опциональные данные (замечание №2): если бэкенд их не отдал,
+    // блок не показываем вместо строки с "undefined".
+    const trustLabel = vm.trustLevel
+      ? { high: "Высокий уровень доверия", medium: "Средний уровень доверия", low: "Низкий уровень доверия" }[vm.trustLevel]
+      : undefined;
+    const trustText = [vm.trustInfo, trustLabel && vm.lastConfirmedAt ? `${trustLabel} · подтверждено: ${vm.lastConfirmedAt}` : undefined]
+      .filter((text): text is string => Boolean(text))
+      .join(" — ");
+    if (trustText) blocks.push({ type: "text", text: trustText });
     if (vm.dataMayBeStale) blocks.push({ type: "staleBanner", text: "Информация может быть неактуальной" });
 
     blocks.push({ type: "sectionLabel", text: "Товары из вашей покупки" });

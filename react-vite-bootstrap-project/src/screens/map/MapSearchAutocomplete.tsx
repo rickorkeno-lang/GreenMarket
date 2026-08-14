@@ -389,9 +389,13 @@ export function MapSearchAutocomplete({
                       <span className="gm-map-search__suggestion-meta">
                         {option.match
                           ? `${option.match.productName} · ${option.match.price} ₽/${option.match.unit} · ` +
-                            DistanceFormatter.format({ meters: option.seller.distanceMeters })
+                            (option.seller.distanceMeters != null
+                              ? DistanceFormatter.format({ meters: option.seller.distanceMeters })
+                              : '—')
                           : `${option.seller.categoryNames.slice(0, 2).join(' · ')} · ` +
-                            DistanceFormatter.format({ meters: option.seller.distanceMeters })}
+                            (option.seller.distanceMeters != null
+                              ? DistanceFormatter.format({ meters: option.seller.distanceMeters })
+                              : '—')}
                       </span>
                     </span>
                   </button>

@@ -48,7 +48,9 @@ export function SellerCardRecommendations({
               trailing={
                 <Stack gap="xs" align="end">
                   <Text variant="caption" tone="secondary">
-                    {RatingFormatter.format({ value: recommendation.seller.rating })}
+                    {recommendation.seller.rating != null
+                      ? RatingFormatter.format({ value: recommendation.seller.rating })
+                      : '—'}
                   </Text>
                 </Stack>
               }
@@ -59,12 +61,16 @@ export function SellerCardRecommendations({
                   {recommendation.sharedCategoryNames.join(' · ')}
                 </Text>
                 <Text variant="caption" tone="tertiary">
-                  {DistanceFormatter.format({ meters: recommendation.seller.distanceMeters })}
-                  {!recommendation.seller.isAvailable
-                    ? ' · недоступен'
-                    : recommendation.seller.isOpenNow
-                      ? ' · открыт'
-                      : ' · закрыт'}
+                  {recommendation.seller.distanceMeters != null
+                    ? DistanceFormatter.format({ meters: recommendation.seller.distanceMeters })
+                    : null}
+                  {recommendation.seller.isAvailable == null
+                    ? ' · статус не указан'
+                    : !recommendation.seller.isAvailable
+                      ? ' · недоступен'
+                      : recommendation.seller.isOpenNow
+                        ? ' · открыт'
+                        : ' · закрыт'}
                 </Text>
               </Stack>
             </ListItem>
