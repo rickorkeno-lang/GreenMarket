@@ -6,6 +6,19 @@
   mix-blend-mode: normal;
 }
 
+/* ---------- MAP-031: полноэкранная поверхность карты ----------
+ * Fullscreen API применяется к обёртке .gm-map-surface (MapSurface). Размер
+ * и позиционирование в fullscreen задаёт UA (:fullscreen → position:fixed,
+ * 100%×100% в top layer). Фон из токена темы нужен на время перехода: при
+ * входе/выходе (кнопка/Esc) тайлы могут не покрыть мгновенно весь экран —
+ * вместо «дыры» виден фон поверхности. Сам режим не трогает карту: Leaflet
+ * остаётся смонтированным, состояние камеры/маркеров/фильтров/маршрута/панелей
+ * не сбрасывается. */
+.gm-map-surface:fullscreen {
+  background: var(--color-surface-base);
+}
+
+
 /* ---------- Маршрут до продавца (MAP-020) ----------
  * Полилиния OSRM рисуется двумя слоями: белая подложка (контраст с любыми
  * тайлами и уличной сеткой) + цветная ломаная поверх (брендовый токен, тема
@@ -18,12 +31,80 @@
   stroke-linejoin: round;
   fill: none;
   opacity: 0.95;
+  /* MAP-032: маршрут «появляется», а не возникает мгновенно. Комбинация
+   * fade (opacity элемента — Leaflet управляет только stroke-opacity, так что
+   * CSS-opacity не перекрывается) + dash-эффект «прочерчивания».
+   * animation-delay: 1.25s = полёт камеры (ROUTE_FIT_DURATION_S = 1.2s в
+   * LeafletAdapter) + 50мс запаса — маршрут начинает рисоваться ПОСЛЕ того,
+   * как камера встала в позицию. fill both держит линию скрытой (from-кадр)
+   * во время полёта. Leaflet при зуме/пане трогает только атрибут d,
+   * анимация играет один раз на mount. */
+  stroke-dasharray: 2400;
+  stroke-dashoffset: 2400;
+  animation: gm-map-route-in var(--duration-slow) var(--easing-decelerate) 1.25s both;
 }
 
 .gm-map-route--casing {
   stroke: #ffffff;
   stroke-width: 9;
   opacity: 0.7;
+  animation: gm-map-casing-in var(--duration-slow) var(--easing-decelerate) 1.25s both;
+}
+
+@keyframes gm-map-route-in {
+  from {
+    opacity: 0;
+    stroke-dashoffset: 2400;
+  }
+  to {
+    opacity: 0.95;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes gm-map-casing-in {
+  from {
+    opacity: 0;
+    stroke-dashoffset: 2400;
+  }
+  to {
+    opacity: 0.7;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Точка геолокации пользователя и точка старта маршрута (CircleMarker, класс
+ * приходит через Leaflet pathOptions.className): плавное появление, а не
+ * «моргание» готовой точки. */
+.gm-map-user-location {
+  animation: gm-map-dot-in var(--duration-normal) var(--easing-decelerate);
+}
+
+@keyframes gm-map-dot-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Содержимое Bottom Sheet экрана Map: контейнер шита уже выезжает (gm-slide-up
+ * в containers.css), а контент между вкладками шита (выбранный продавец →
+ * точки торговли → результаты поиска) раньше переключался мгновенно. Класс
+ * вешается на keyed-обёртку, перемонтируемую при смене mapState.bottomSheet —
+ * новый контент мягко проявляется. */
+.gm-map-sheet-fade {
+  animation: gm-map-sheet-fade-in var(--duration-normal) var(--easing-decelerate);
+}
+
+@keyframes gm-map-sheet-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* ---------- Map UI: панель плавающих кнопок (нижний правый угол) ----------
@@ -110,6 +191,66 @@
   background: var(--color-surface-raised);
   color: var(--color-text-primary);
   border: var(--border-width-hairline) solid var(--color-border-default);
+}
+
+/* ---------- Сбой загрузки точек торговли (замечание №1) ----------
+ * Баннер по центру сверху карты: ошибка MARKETS_LOAD_FAILED не должна
+ * растворяться в пустой карте. Белая поверхность + «Повторить» — тот же
+ * язык, что у пилюли «Убрать маршрут» и панели FAB. */
+.gm-map-markets-error {
+  position: absolute;
+  top: var(--space-md);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-md);
+  max-width: calc(100% - 2 * var(--space-lg));
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  box-shadow: var(--elevation-3);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  animation: gm-map-banner-in var(--duration-normal) var(--easing-decelerate);
+}
+
+@keyframes gm-map-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.gm-map-markets-error__text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gm-map-markets-error__retry {
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-brand-primary-strong);
+  color: var(--color-surface-base);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+}
+
+.gm-map-markets-error__retry:focus-visible {
+  outline: 2px solid var(--color-brand-primary-strong);
+  outline-offset: 2px;
 }
 
 @keyframes gm-map-fab-in {
@@ -255,6 +396,23 @@
 @media (prefers-reduced-motion: reduce) {
   .gm-map-marker__dot--selected::after {
     display: none;
+  }
+
+  /* MAP-032: без анимаций появления/«рисования». Для маршрута важно сбросить
+   * и базовый stroke-dashoffset, иначе линия осталась бы невидимой (dash
+   * «рисуется» только анимацией). */
+  .gm-map-route {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+
+  .gm-map-market__pin,
+  .gm-map-user-location,
+  .gm-map-search__dropdown,
+  .gm-map-search__mode-switch,
+  .gm-map-markets-error,
+  .gm-map-sheet-fade {
+    animation: none;
   }
 }
 
@@ -464,6 +622,21 @@
   background: var(--color-surface-raised);
   border: var(--border-width-hairline) solid var(--color-border-default);
   box-shadow: var(--elevation-3);
+  /* MAP-032: дропдаун «выпадает» (fade + сдвиг) при открытии; список
+   * обновляется на каждый ввод без перемонтирования контейнера, поэтому
+   * анимация не переигрывается при вводе. */
+  animation: gm-map-dropdown-in var(--duration-fast) var(--easing-standard);
+}
+
+@keyframes gm-map-dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .gm-map-search__status {
@@ -560,6 +733,9 @@
   font-size: var(--font-size-sm);
   cursor: pointer;
   box-shadow: var(--elevation-1);
+  /* MAP-032: переключатель «Искать по товару/названию» появляется плавно
+   * (как дропдаун), а не мгновенно. Класс общий для карты и списка продавцов. */
+  animation: gm-map-dropdown-in var(--duration-fast) var(--easing-standard);
 }
 
 .gm-map-search__mode-switch:hover {
@@ -633,6 +809,21 @@
     0 0 0 1px rgba(0, 0, 0, 0.15);
   cursor: pointer;
   transition: transform var(--duration-fast) var(--easing-standard);
+  /* MAP-032: булавка «попадает» на место при появлении (первая загрузка точек)
+   * и при смене выбора (setIcon пересоздаёт DOM) — точки рынков НЕ входят в
+   * MarkerClusterGroup, поэтому анимация не переигрывается на зуме. */
+  animation: gm-map-pin-in var(--duration-normal) var(--easing-decelerate);
+}
+
+@keyframes gm-map-pin-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotate(45deg) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(45deg) scale(1);
+  }
 }
 
 .gm-map-market__pin:hover {

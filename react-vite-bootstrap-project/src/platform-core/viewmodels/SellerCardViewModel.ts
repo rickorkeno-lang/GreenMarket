@@ -20,17 +20,21 @@ import type { ProductRecord } from "../contracts/DomainTypes";
 /** Доменный контракт по ТЗ-025 §12 + доработки v1.1 — то, что реально отдаёт
  *  Backend/Platform Core. Ничего из этого не знает про рендеринг. */
 export interface SellerCardViewModel {
-  seller: { id: SellerId; name: string; rating: number; distance: string };
+  /** rating/distance — необязательны: бэкенд может не отдать оценку/расстояние
+   *  (замечание №2 — карточка не выдумывает факты, их отсутствие явно в типе). */
+  seller: { id: SellerId; name: string; rating?: number; distance?: string };
   coverage: { have: number; total: number; fullyCovered: boolean };
   importantAlerts: string[];
   /** ТЗ-025 v1.1 §6: порядок фиксирован — доступные → замены → отсутствующие.
    *  Сортировка — ответственность Backend/Adapter, не React. */
   basketProducts: ProductRecord[];
   otherProducts: ProductRecord[];
-  trustInfo: string;
+  /** Строка о доверии («Продавец проверен площадкой…»); undefined — информации
+   *  нет (у продавца с бэкенда, чей профиль не содержит проверок). */
+  trustInfo?: string;
   /** ТЗ-025 v1.1 §7: уровень доверия и актуальность данных о продавце. */
-  trustLevel: "high" | "medium" | "low";
-  lastConfirmedAt: string;
+  trustLevel?: "high" | "medium" | "low";
+  lastConfirmedAt?: string;
   dataMayBeStale: boolean;
   /** ТЗ-025 v1.1 §10: фотографии — независимая lazy-загружаемая лента. */
   photos: PhotoItem[];

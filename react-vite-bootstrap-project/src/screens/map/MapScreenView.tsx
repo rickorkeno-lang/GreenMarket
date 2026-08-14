@@ -76,7 +76,20 @@ function parseRadiusKmToMeters(value: string): number | null {
  * оверлеем, не размонтируя её. Пока оверлей открыт, собственный Bottom Sheet
  * карты (поиск/история/карточка маркера) не показывается.
  */
-export function MapScreenView({ children }: { children?: ReactNode }) {
+export function MapScreenView({
+  children,
+  isFullscreen = false,
+  fullscreenSupported = true,
+  onToggleFullscreen,
+}: {
+  children?: ReactNode;
+  /** MAP-031: состояние Fullscreen API (синхронизировано через fullscreenchange). */
+  isFullscreen?: boolean;
+  /** MAP-031: Fullscreen API доступен — иначе кнопка не показывается. */
+  fullscreenSupported?: boolean;
+  /** MAP-031: вход/выход из полноэкранного режима (владелец — MapSurface). */
+  onToggleFullscreen?: () => void;
+}) {
   const { dispatch } = useGreenMarketRuntime();
   const mapState = useSyncExternalStore(MapRuntime.subscribe, MapRuntime.getState);
 
@@ -315,6 +328,11 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
     MapRuntime.clearRoute();
   }, []);
 
+  /** Отключение/включение POI (MAP-027) */
+  const handleToggleMapPois = useCallback(() => {
+    MapRuntime.toggleMapPois();
+  }, []);
+
   const handleCenterOnUser = useCallback(async () => {
     dispatch({ type: 'CENTER_ON_USER' });
     const location = await resolveLocationOrNotify();
@@ -405,6 +423,9 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
         mapState.visibleSellers.find((s) => s.sellerId === sellerId) ??
         null;
       if (!target) return;
+      // Замечание №2: без координат центрировать карту нельзя — действие
+      // пропускаем (координаты в результатах поиска обычно есть).
+      if (!target.location) return;
       MapRuntime.dispatch({ type: 'MOVE_MAP', center: target.location, zoom: ZOOM_ON_SELLER });
       MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId });
       dispatch({ type: 'SELECT_SELLER', payload: { sellerId } });
@@ -502,6 +523,7 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
   const handleProductSellerSelect = useCallback(
     (match: ProductSellerMatch) => {
       MapRuntime.clearProductSearch();
+      if (!match.seller.location) return;
       MapRuntime.dispatch({ type: 'MOVE_MAP', center: match.seller.location, zoom: ZOOM_ON_SELLER });
       MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: match.seller.sellerId });
       dispatch({ type: 'SELECT_SELLER', payload: { sellerId: match.seller.sellerId } });
@@ -518,6 +540,7 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
       setSearchQuery(seller.name);
       searchQueryRef.current = seller.name;
       MapRuntime.clearSearchSuggestions();
+      if (!seller.location) return;
       MapRuntime.dispatch({ type: 'MOVE_MAP', center: seller.location, zoom: ZOOM_ON_SELLER });
       MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: seller.sellerId });
       dispatch({ type: 'SELECT_SELLER', payload: { sellerId: seller.sellerId } });
@@ -539,7 +562,7 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
         return;
       }
       const found = await MapRuntime.searchSellerByName(query);
-      if (found) {
+      if (found?.location) {
         // §6: центрирование карты + автоматическое открытие Bottom Sheet.
         MapRuntime.dispatch({ type: 'MOVE_MAP', center: found.location, zoom: ZOOM_ON_SELLER });
         MapRuntime.dispatch({ type: 'SELECT_SELLER', sellerId: found.sellerId });
@@ -578,6 +601,7 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
       sellerHistory: mapState.sellerHistory,
       route: mapState.route,
       currentAreaLabel: mapState.currentAreaLabel,
+      hideMapPois: mapState.hideMapPois,
     }),
     [mapState, camera],
   );
@@ -640,6 +664,7 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
             userLocation={mapState.userLocation}
             route={mapState.route.status === 'success' ? mapState.route.route : null}
             camera={camera}
+            hideMapPois={mapState.hideMapPois}
             onMapLoaded={() => dispatch({ type: 'MAP_LOADED' })}
             onCameraChange={handleCameraChange}
             onVisibleBoundsChange={handleVisibleBoundsChange}
@@ -654,12 +679,26 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
         {/* Плавающая панель действий: белая поверхность, чтобы иконки не
             сливались с картой; кнопки равноудалены (gap = --space-sm). */}
         <div className="gm-map-fab-panel">
+          <MapFabButton
+            label="Отключение мест"
+            icon={mapState.hideMapPois ? "🗺️" : "🏙️"}
+            onClick={handleToggleMapPois}
+            testId="toggle-map-pois"
+          />
           <MapFabButton label="Открыть каталог" icon="🛒" onClick={handleOpenCatalog} testId="open-catalog" />
           <MapFabButton label="Поиск продавцов" icon="🧭" onClick={handleOpenSellerSearch} testId="open-seller-search" />
           {mapState.sellerHistory.length > 0 && (
             <MapFabButton label="История" icon="🕘" onClick={handleOpenSellerHistory} testId="open-seller-history" />
           )}
           <MapFabButton label="Моё местоположение" icon="📍" onClick={() => void handleCenterOnUser()} />
+          {fullscreenSupported && onToggleFullscreen && (
+            <MapFabButton
+              label={isFullscreen ? 'Выйти из полноэкранного режима' : 'Полноэкранный режим'}
+              icon={isFullscreen ? '⇱' : '⇲'}
+              onClick={onToggleFullscreen}
+              testId="toggle-fullscreen"
+            />
+          )}
         </div>
 
         {/* «Убрать маршрут» (MAP-020): левый нижний угол, зеркально панели FAB
@@ -677,6 +716,26 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
             <span className="gm-map-route-clear__icon" aria-hidden="true">🗺️</span>
             <span className="gm-map-route-clear__text">Убрать маршрут</span>
           </button>
+        )}
+
+        {/* Сбой загрузки точек торговли (замечание №1): вместо молчаливо
+            пустой карты — заметный баннер с кнопкой «Повторить» (повтор
+            грузит и продавцов, и точки торговли: requestVisibleSellers →
+            loadVisibleMarketsNow). Показывается до тех пор, пока следующий
+            запрос точек не завершится успехом (MARKETS_LOADED сбрасывает
+            marketsError в MapRuntime). */}
+        {mapState.marketsError && (
+          <div className="gm-map-markets-error" role="status" data-testid="markets-error-banner">
+            <span className="gm-map-markets-error__text">Не удалось загрузить точки торговли</span>
+            <button
+              type="button"
+              className="gm-map-markets-error__retry"
+              onClick={() => MapRuntime.retryVisibleSellers()}
+              data-testid="markets-error-retry"
+            >
+              Повторить
+            </button>
+          </div>
         )}
       </Content>
 
@@ -699,7 +758,11 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
               </IconButton>
             }
           >
-            {mapState.bottomSheet === 'marketSellers' ? (
+            {/* MAP-032: keyed-обёртка — контент перемонтируется и плавно
+                проявляется при смене вкладки шита (см. .gm-map-sheet-fade),
+                вместо мгновенного переключения блоков. */}
+            <div key={mapState.bottomSheet} className="gm-map-sheet-fade">
+              {mapState.bottomSheet === 'marketSellers' ? (
               <Stack gap="sm" className="gm-market-sellers">
                 {/* Шапка попапа точки торговли (задача «Маркеты»): «назад» +
                     название/адрес точки + кнопка «Построить маршрут». Не
@@ -834,7 +897,7 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
                 <div className="gm-seller-history__list">
                   <MapBottomSheetContent
                     blocks={bottomSheetBlocks}
-                    onRetry={() => {}}
+                    onRetry={() => { }}
                     onAction={handleBlockAction}
                   />
                 </div>
@@ -846,6 +909,7 @@ export function MapScreenView({ children }: { children?: ReactNode }) {
                 onAction={handleBlockAction}
               />
             )}
+            </div>
           </BottomSheetSurface>
         </BottomSheetContainer>
       )}

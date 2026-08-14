@@ -53,7 +53,7 @@ export function rankRecommendedSellers(
       return (
         Number(b.allCategoriesShared) - Number(a.allCategoriesShared) ||
         b.commonCategories - a.commonCategories ||
-        a.seller.distanceMeters - b.seller.distanceMeters ||
+        (a.seller.distanceMeters ?? 0) - (b.seller.distanceMeters ?? 0) ||
         (a.seller.sellerId < b.seller.sellerId ? -1 : 1)
       );
     });

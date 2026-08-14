@@ -1,9 +1,10 @@
-﻿import { useCallback, useEffect, useRef, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, type CSSProperties } from "react";
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMap, useMapEvents } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import type { MapAdapterProps } from "@/platform-core/map/gis/MapAdapterTypes";
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
+import { CleanMapTileProvider } from "@/platform-core/map/gis/TileProvider";
 import type { MarketId, SellerId } from "@/platform-core/contracts/Action";
 import {
   buildClusterMarkerHtml,
@@ -143,13 +144,19 @@ function MapEventsBridge({
   return null;
 }
 
+/** Длительность полёта камеры под маршрут (MAP-032). Её +50мс на запас
+ *  держит map.css (.gm-map-route animation-delay): маршрут начинает
+ *  «рисоваться» ТОЛЬКО после того, как камера встала в позицию. Если менять
+ *  здесь — править и задержку в map.css (1.25s). */
+const ROUTE_FIT_DURATION_S = 1.2;
+
 function CenterRequestBridge({ token, camera }: { token: number; camera: MapAdapterProps["camera"] }) {
   const map = useMap();
   const lastToken = useRef(token);
   useEffect(() => {
     if (token !== lastToken.current) {
       lastToken.current = token;
-      map.flyTo([camera.center.lat, camera.center.lng], camera.zoom, { duration: 0.6 });
+      map.flyTo([camera.center.lat, camera.center.lng], camera.zoom, { duration: 0.9 });
     }
   }, [token, camera, map]);
   return null;
@@ -160,7 +167,13 @@ function CenterRequestBridge({ token, camera }: { token: number; camera: MapAdap
  *  её целиком с запасом в один зум-уровень (maxZoom = zoom точного вписывания
  *  минус 1): маршрут виден от точки старта до продавца, без необходимости
  *  скроллить карту. Токен — ровно как centerRequestToken: императивный, не
- *  зависит от движка. */
+ *  зависит от движка.
+ *
+ *  MAP-032: используется flyToBounds, а не fitBounds. fitBounds при сильном
+ *  отдалении (маршрут в несколько раз больше экрана) НЕ анимирует зум — камера
+ *  мгновенно перепрыгивает на нужный zoom, и только потом плавно едет центр.
+ *  flyToBounds считает целевую точку/зум и вызывает flyTo, который плавно
+ *  анимирует ЛЮБОЙ перепад зума (та же механика, что у flyTo). */
 function FitRouteBridge({ token, route }: { token: number; route: MapAdapterProps["route"] }) {
   const map = useMap();
   const lastToken = useRef(-1);
@@ -171,11 +184,10 @@ function FitRouteBridge({ token, route }: { token: number; route: MapAdapterProp
     if (!route || route.geometry.length < 2) return;
     const bounds = L.latLngBounds(route.geometry.map((p) => [p.lat, p.lng] as [number, number]));
     const fitZoom = map.getBoundsZoom(bounds);
-    map.fitBounds(bounds, {
+    map.flyToBounds(bounds, {
       padding: [48, 48],
       maxZoom: Math.max(map.getMinZoom(), fitZoom - 1),
-      animate: true,
-      duration: 0.8,
+      duration: ROUTE_FIT_DURATION_S,
     });
   }, [token, route, map]);
   return null;
@@ -441,6 +453,7 @@ export function LeafletAdapter({
   userLocation,
   route,
   camera,
+  hideMapPois,
   onMapLoaded,
   onCameraChange,
   onVisibleBoundsChange,
@@ -450,6 +463,9 @@ export function LeafletAdapter({
   centerRequestToken,
   fitRouteRequestToken,
 }: MapAdapterProps) {
+  // Выбираем провайдера тайлов в зависимости от настроек POI (MAP-027)
+  const activeTileConfig = hideMapPois ? CleanMapTileProvider : defaultMapConfig.tileProvider;
+
   // Позиции ломаной маршрута (MAP-020): [lat, lng] в порядке «пользователь →
   // продавец». Маршрут рисуется под маркерами (LayerOrder — сначала в JSX).
   const routePositions = route
@@ -483,11 +499,12 @@ export function LeafletAdapter({
         attributionControl={true}
       >
         <TileLayer
-          url={defaultMapConfig.tileProvider.urlTemplate}
-          attribution={defaultMapConfig.tileProvider.attribution}
-          maxZoom={defaultMapConfig.tileProvider.maxZoom}
-          maxNativeZoom={defaultMapConfig.tileProvider.maxZoom}
-          minZoom={defaultMapConfig.tileProvider.minZoom}
+          key={activeTileConfig.urlTemplate} // key нужен, чтобы слой перерисовался при смене URL
+          url={activeTileConfig.urlTemplate}
+          attribution={activeTileConfig.attribution}
+          maxZoom={activeTileConfig.maxZoom}
+          maxNativeZoom={activeTileConfig.maxZoom}
+          minZoom={activeTileConfig.minZoom}
         />
         <MapEventsBridge
           onCameraChange={onCameraChange}
@@ -503,7 +520,13 @@ export function LeafletAdapter({
           <CircleMarker
             center={[userLocation.lat, userLocation.lng]}
             radius={7}
-            pathOptions={{ color: "#ffffff", weight: 2, fillColor: "#2E6C8E", fillOpacity: 1 }}
+            pathOptions={{
+              className: "gm-map-user-location",
+              color: "#ffffff",
+              weight: 2,
+              fillColor: "#2E6C8E",
+              fillOpacity: 1,
+            }}
           />
         )}
 
@@ -514,15 +537,32 @@ export function LeafletAdapter({
          *  пользователя выше. */}
         {routePositions.length > 1 && (
           <>
-            <Polyline positions={routePositions} pathOptions={{ className: "gm-map-route gm-map-route--casing" }} />
-            <Polyline positions={routePositions} pathOptions={{ className: "gm-map-route" }} />
+            {/* key = fitRouteRequestToken: каждый новый маршрут монтирует ломаную
+             * заново, и CSS-анимация появления (.gm-map-route, задержка = полёт
+             * камеры) проигрывается для каждого построения, а не только первого. */}
+            <Polyline
+              key={`route-casing-${fitRouteRequestToken}`}
+              positions={routePositions}
+              pathOptions={{ className: "gm-map-route gm-map-route--casing" }}
+            />
+            <Polyline
+              key={`route-${fitRouteRequestToken}`}
+              positions={routePositions}
+              pathOptions={{ className: "gm-map-route" }}
+            />
           </>
         )}
         {routePositions.length > 1 && !userLocation && (
           <CircleMarker
             center={routePositions[0]}
             radius={5}
-            pathOptions={{ color: "#ffffff", weight: 2, fillColor: "#2E6C8E", fillOpacity: 1 }}
+            pathOptions={{
+              className: "gm-map-user-location",
+              color: "#ffffff",
+              weight: 2,
+              fillColor: "#2E6C8E",
+              fillOpacity: 1,
+            }}
           />
         )}
 
@@ -547,14 +587,18 @@ export function LeafletAdapter({
           animateAddingMarkers={false}
           iconCreateFunction={clusterDivIcon}
         >
-          {sellers.map((seller) => (
-            <Marker
-              key={seller.sellerId}
-              position={[seller.location.lat, seller.location.lng]}
-              icon={sellerDivIcon(seller.name, seller.sellerId === selectedSellerId, seller.isAvailable, seller.sellerId)}
-              eventHandlers={{ click: () => onSellerSelect(seller.sellerId) }}
-            />
-          ))}
+          {sellers.map((seller) =>
+            // Замечание №2: продавец может не иметь координат (location === null) —
+            // без координат маркер не ставим (ложную позицию на карте не создаём).
+            seller.location ? (
+              <Marker
+                key={seller.sellerId}
+                position={[seller.location.lat, seller.location.lng]}
+                icon={sellerDivIcon(seller.name, seller.sellerId === selectedSellerId, seller.isAvailable ?? false, seller.sellerId)}
+                eventHandlers={{ click: () => onSellerSelect(seller.sellerId) }}
+              />
+            ) : null,
+          )}
         </MarkerClusterGroup>
 
         {/* Точки торговли (задача «Маркеты»): отдельный слой ПОСЛЕ кластеров,
@@ -577,5 +621,3 @@ export function LeafletAdapter({
     </div>
   );
 }
-
-

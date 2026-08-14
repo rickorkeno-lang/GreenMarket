@@ -4,6 +4,7 @@ import { useGreenMarketRuntime } from '@/platform-core/navigation-runtime-layer/
 import { MapScreenView } from '@/screens/map/MapScreenView';
 import { SellerCardScreenView } from '@/screens/seller-card/SellerCardScreenView';
 import { SellerListScreenView } from '@/screens/seller-list/SellerListScreenView';
+import { useMapFullscreen } from '@/app/useMapFullscreen';
 
 /**
  * Карта-поверхность (ТЗ-024 §10: «Карта не входит в стек»). Рендерится по
@@ -16,10 +17,18 @@ import { SellerListScreenView } from '@/screens/seller-list/SellerListScreenView
  * Оверлей позиционируется через position:fixed на всю высоту экрана: у
  * карточки/списка собственный Header и скролл контента (как у экрана раньше),
  * а контент панели высокий, поэтому визуально он и так занимает весь экран.
+ *
+ * MAP-031: полноэкранный режим (Fullscreen API) применяется к ОБЁРТКЕ этой
+ * поверхности (ref из useMapFullscreen), а не к контейнеру Leaflet — чтобы
+ * вместе с картой в fullscreen оставались Bottom Sheet, Seller Card, FAB и
+ * другие overlays. Переключение не трогает состояние карты: requestFullscreen/
+ * exitFullscreen не перемонтируют DOM, MapRuntime и локальное состояние
+ * MapScreenView сохраняются.
  */
 export function MapSurface() {
   const { state } = useGreenMarketRuntime();
   const top = currentEntry(state.navigation);
+  const { surfaceRef, isFullscreen, fullscreenSupported, toggleFullscreen } = useMapFullscreen();
 
   let overlay: ReactNode = null;
   if (top.screen === 'SellerCard') {
@@ -36,7 +45,17 @@ export function MapSurface() {
     );
   }
 
-  return <MapScreenView>{overlay}</MapScreenView>;
+  return (
+    <div ref={surfaceRef} className="gm-map-surface" data-testid="map-surface" style={{ height: '100vh' }}>
+      <MapScreenView
+        isFullscreen={isFullscreen}
+        fullscreenSupported={fullscreenSupported}
+        onToggleFullscreen={toggleFullscreen}
+      >
+        {overlay}
+      </MapScreenView>
+    </div>
+  );
 }
 
 const overlayStyle: React.CSSProperties = {

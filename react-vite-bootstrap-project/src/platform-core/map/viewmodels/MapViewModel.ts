@@ -19,19 +19,29 @@ export interface MapBounds {
 
 /** Продавец на карте — доменная запись Map (IMP-003.1 §15 "Маркеры продавцов").
  *  Не путать с SellerCardViewModel#seller (там уже отформатированные строки
- *  distance и т.п.) — здесь сырые данные, форматирование делает MapSheetAdapter. */
+ *  distance и т.п.) — здесь сырые данные, форматирование делает MapSheetAdapter.
+ *
+ *  Замечание №2: запись НЕ выдумывает backend-факты. У продавца с бэкенда, чей
+ *  профиль не отдаёт координаты/рейтинг/часы работы, соответствующие поля
+ *  отсутствуют (location = null, остальное — undefined). Потребители обязаны
+ *  явно обрабатывать «данных нет» — компилятор заставляет это делать. */
 export interface SellerMapRecord {
   sellerId: SellerId;
   name: string;
-  location: GeoPoint;
-  rating: number;
-  distanceMeters: number;
+  location: GeoPoint | null;
+  /** Оценка продавца; undefined — бэкенд не отдал. */
+  rating?: number;
+  /** Расстояние до точки интереса (карты/поиска); undefined — неизвестно. */
+  distanceMeters?: number;
   categories: CategoryId[];
   categoryNames: string[];
   photoUrl: string | null;
-  isOpenNow: boolean;
-  workingHoursLabel: string;
-  isAvailable: boolean;
+  /** Открыт ли сейчас; undefined — бэкенд не отдал. */
+  isOpenNow?: boolean;
+  /** Подпись часов работы; undefined — нет данных. */
+  workingHoursLabel?: string;
+  /** Доступен ли продавец (принимает ли заказы); undefined — неизвестно. */
+  isAvailable?: boolean;
 }
 
 /** Тип точки торговли (задача «Маркеты»): MARKET — рынок (много продавцов в
@@ -255,4 +265,8 @@ export interface MapViewModel {
    *  расстояние/время и кнопки «Маршрут»/«Убрать маршрут». */
   route: RouteState;
   currentAreaLabel: string | null;
+
+  /** MAP-027: Флаг скрытия встроенных POI карты. Если true, на карте не 
+   *  отображаются стандартные метки ресторанов/магазинов тайлового провайдера. */
+  hideMapPois: boolean;
 }

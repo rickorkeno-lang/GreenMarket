@@ -34,6 +34,8 @@ export interface MapAdapterProps {
    *  null — маршрута нет (не запрашивался/убран). Реализация движка рисует
    *  его как ломаную от точки пользователя к продавцу. */
   route: RouteModel | null;
+  /** MAP-027: Управляет видимостью встроенных в базовую карту точек (POI). */
+  hideMapPois: boolean;
   onMapLoaded: () => void;
   onCameraChange: (camera: CameraParams, reason: CameraChangeReason) => void;
   onVisibleBoundsChange: (bounds: MapBounds) => void;
