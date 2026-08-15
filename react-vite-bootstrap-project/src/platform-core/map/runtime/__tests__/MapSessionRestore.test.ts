@@ -29,10 +29,10 @@ const storage = new Map<string, string>();
 // «Предыдущий сеанс»: карта стояла на Франкфурте (zoom 15), фильтр «Овощи и
 // фрукты» + «Только открытые», в строке поиска «Медовый», открыт мастер
 // «Поиск продавцов» с точкой «Моё местоположение» (радиус 2.5 км) и открыта
-// карточка продавца «Медовый край» (seller-1).
+// карточка продавца «Медовый край» (seller--1).
 //
 // Данные карточки в снапшоте намеренно УСТАРЕЛИ (isOpenNow=true, «Открыто до
-// 20:00»), а в каталоге у seller-1 isOpenNow=false («Открывается в 09:00»):
+// 20:00»), а в каталоге у seller--1 isOpenNow=false («Открывается в 09:00»):
 // карточка обязана сначала мгновенно отрисоваться со снапшотом (замечание №5 —
 // снапшот здесь не «спорная модель», а осознанный UX мгновенного рендера),
 // но затем MapRuntime принудительно актуализирует её через Repository.getSeller
@@ -49,9 +49,9 @@ const seeded = {
   },
   bottomSheet: {
     type: "sellerSummary",
-    sellerId: "seller-1",
+    sellerId: "seller--1",
     seller: {
-      sellerId: "seller-1",
+      sellerId: "seller--1",
       name: "Медовый край",
       location: { lat: 50.12, lng: 8.66 },
       rating: 4.8,
@@ -65,7 +65,7 @@ const seeded = {
     },
   },
 };
-storage.set("gm.map.session.v1", JSON.stringify(seeded));
+storage.set("gm.map.session.v2", JSON.stringify(seeded));
 
 const { MapRuntime } = await import("../MapRuntime");
 
@@ -87,8 +87,8 @@ assert.equal(s.sellerSearch.radiusMeters, 2500, "радиус поиска во�
 // снапшота сеанса (продавец может быть вне видимой области — данные берутся
 // из searchResult до ответа Repository).
 assert.equal(s.bottomSheet, "sellerSummary", "открытая панель восстановлена");
-assert.equal(s.selectedSellerId, "seller-1", "выбор продавца восстановлен");
-assert.equal(s.searchResult?.[0]?.sellerId, "seller-1", "данные карточки восстановлены в searchResult");
+assert.equal(s.selectedSellerId, "seller--1", "выбор продавца восстановлен");
+assert.equal(s.searchResult?.[0]?.sellerId, "seller--1", "данные карточки восстановлены в searchResult");
 assert.equal(s.searchResult?.[0]?.name, "Медовый край", "мгновенный рендер: имя из снапшота");
 assert.equal(s.searchResult?.[0]?.isOpenNow, true, "мгновенный рендер: статус из снапшота (устаревший)");
 
@@ -105,7 +105,7 @@ await new Promise((resolve) => setTimeout(resolve, 400));
 const refreshed = MapRuntime.getState();
 assert.equal(
   refreshed.searchResult?.[0]?.sellerId,
-  "seller-1",
+  "seller--1",
   "после refresh карточка по-прежнему указывает на выбранного продавца",
 );
 assert.equal(

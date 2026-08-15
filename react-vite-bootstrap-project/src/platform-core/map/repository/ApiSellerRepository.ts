@@ -67,7 +67,7 @@ interface BackendSellerDetail {
 function parseSellerNumericId(id: SellerId | string): number {
   const str = String(id).replace(/^(seller-)+/, '');
   const num = Number(str);
-  if (Number.isNaN(num)) throw new Error(`Invalid API numeric SellerId: ${id}`);
+  if (Number.isNaN(num) || num < 0) throw new Error(`Invalid API numeric SellerId: ${id}`);
   return num;
 }
 

@@ -37,6 +37,7 @@ export const LOCATION_TRACKING_INTERVAL_MS = 3000;
 let locationTrackingTimer: number | null = null;
 let locationTrackingListener: ((location: GeoPoint) => void) | null = null;
 let locationTrackingOnError: ((kind: "no-permission" | "unavailable") => void) | null = null;
+let locationTrackingGeneration = 0;
 
 function clearLocationTrackingTimer(): void {
   if (locationTrackingTimer !== null) {
@@ -123,30 +124,36 @@ export const GeoService = {
    *  предыдущего — запросы не пересекаются. Сбой отдельного тика тихо
    *  пропускается (временная потеря сигнала не останавливает трекинг); если
    *  доступ отозван (denied) — трекинг останавливается и вызывается
-   *  onError("no-permission"). Повторный вызов сбрасывает предыдущий цикл.
+   *  onError("no-permission"). Каждый запуск увеличивает locationTrackingGeneration:
+   *  тики устаревшего цикла (пока их getCurrentLocation ещё в полёте) теряют право
+   *  передавать позицию, обрабатывать ошибку и ставить следующий таймер, поэтому
+   *  повторный вызов гарантированно сбрасывает предыдущий цикл — параллельных
+   *  циклов и передачи устаревшей позиции новому слушателю не бывает.
    *  Остановка — GeoService#stopTracking (экран зовёт её при размонтировании). */
   startTracking(
     onLocation: (location: GeoPoint) => void,
     onError?: (kind: "no-permission" | "unavailable") => void,
   ): void {
     this.stopTracking();
+    const generation = ++locationTrackingGeneration;
     locationTrackingListener = onLocation;
     locationTrackingOnError = onError ?? null;
     const tick = async (): Promise<void> => {
-      if (!locationTrackingListener) return;
+      if (generation !== locationTrackingGeneration || !locationTrackingListener) return;
       try {
         const location = await this.getCurrentLocation(0);
-        if (!locationTrackingListener) return;
-        locationTrackingListener(location);
+        if (generation !== locationTrackingGeneration) return;
+        locationTrackingListener?.(location);
       } catch {
         const permission = await this.getPermissionState();
-        if (!locationTrackingListener) return;
+        if (generation !== locationTrackingGeneration) return;
         if (permission === "denied") {
           locationTrackingOnError?.("no-permission");
           this.stopTracking();
           return;
         }
       }
+      if (generation !== locationTrackingGeneration || !locationTrackingListener) return;
       locationTrackingTimer = window.setTimeout(tick, LOCATION_TRACKING_INTERVAL_MS);
     };
     void tick();

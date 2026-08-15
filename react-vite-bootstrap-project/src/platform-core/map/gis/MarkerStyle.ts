@@ -286,18 +286,24 @@ export function escapeHtml(value: string): string {
 }
 
 /** Текстовое описание статуса продавца для aria-label маркера (MAP-033).
- *  Строится от оформления (treatment, ось «статус») с учётом выбора: выбранный
- *  маркер — «выбран»; иначе открыт / закрыт / статус неизвестен. */
+ *  Статус (открыт / закрыт / статус неизвестен) строится от оформления
+ *  (treatment, ось «статус») и НЕ теряется из-за выбора: выбранный маркер
+ *  получает «статус, выбран», а не просто «выбран» — выбор ортогональный
+ *  акцент (--selected), а не замена статуса. */
 function sellerMarkerStatusText(state: SellerMarkerState, treatment: SellerMarkerTreatment): string {
-  if (state === "selected") return "выбран";
+  let status: string;
   switch (treatment.kind) {
     case "plain":
-      return "открыт";
+      status = "открыт";
+      break;
     case "closed":
-      return "закрыт";
+      status = "закрыт";
+      break;
     case "faded":
-      return "статус неизвестен";
+      status = "статус неизвестен";
+      break;
   }
+  return state === "selected" ? `${status}, выбран` : status;
 }
 
 /** Разметка DivIcon отдельного маркера продавца (MAP-067/MAP-026).
@@ -309,10 +315,11 @@ function sellerMarkerStatusText(state: SellerMarkerState, treatment: SellerMarke
  *  окраски (выбранная точка всегда акцентная, даже если продавец закрыт; при
  *  этом в будущем замочек для закрытых сохранится в ветках иконок).
  *
- *  Доступность (MAP-033): точка — role="img" с aria-label «название, статус»
- *  (статус — от оформления, см. sellerMarkerStatusText), чтобы скринридер
- *  сообщал, что здесь находится; title остаётся тултипом для мыши. В будущем
- *  aria-label можно расширить категорией (categoryNames) по мере добавления
+ *  Доступность (MAP-033): точка — role="img" с aria-label «название, статус
+ *  [, выбран]» (статус — от оформления, см. sellerMarkerStatusText; выбор
+ *  добавляется поверх, не «съедая» статус), чтобы скринридер сообщал, что
+ *  здесь находится. title остаётся тултипом для мыши. В будущем aria-label
+ *  можно расширить категорией (categoryNames) по мере добавления
  *  категорийных иконок. */
 export function buildSellerMarkerHtml(
   name: string,

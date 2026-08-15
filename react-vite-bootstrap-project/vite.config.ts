@@ -13,6 +13,7 @@ export default defineConfig({
   server: {
     port: 5173,
     open: false,
+    allowedHosts: ['.trycloudflare.com', '.lhr.life', '.serveo.net', '.serveousercontent.com'],
     proxy: {
       // Обход CORS для локальной разработки (бриф, раздел 10; CORS на бэке
       // настроен 29.07, HTTPS-домен поднят 30.07). В проде используется

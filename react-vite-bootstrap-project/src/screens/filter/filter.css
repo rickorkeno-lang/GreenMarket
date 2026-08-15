@@ -44,6 +44,29 @@
   text-overflow: ellipsis;
 }
 
+/* На узких экранах сводка активных фильтров убирается: лого + триггер
+ * «Фильтр» + кнопка списка иначе не помещаются в шапку (лого и фильтр
+ * «наезжают» друг на друга). Сводка остаётся на планшетах и десктопе. */
+@media (max-width: 480px) {
+  .gm-seller-filter__trigger-summary {
+    display: none;
+  }
+}
+
+/* Мобильная версия (тот же брейкпоинт, что у useIsMobile): поповер
+ * центрируется ровно по центру кнопки-триггера (left: 50% + translateX), а не
+ * прижат к её правому краю, — окно симметрично продолжается под кнопкой и не
+ * выпадает за правую границу экрана. max-width — страховка от переполнения на
+ * узких экранах (кнопка у левого края шапки карты). */
+@media (max-width: 767.98px) {
+  .gm-seller-filter__popover {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: calc(100vw - 2 * var(--space-lg));
+  }
+}
+
 .gm-seller-filter__popover {
   position: absolute;
   top: calc(100% + var(--space-xs));

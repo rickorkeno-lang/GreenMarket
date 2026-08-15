@@ -78,7 +78,7 @@ function buildSellers(): SellerMapRecord[] {
     const categories = Array.from(new Set(categoryIndices)).map((ci) => CATEGORIES[ci]);
     const isOpenNow = i % 5 !== 0;
     return {
-      sellerId: asSellerId(`seller-${i + 1}`),
+      sellerId: asSellerId(`seller-${-(i + 1)}`),
       name,
       location,
       rating: 3.5 + ((i * 37) % 15) / 10, // 3.5..4.9 детерминированно
@@ -97,11 +97,13 @@ const ALL_SELLERS = buildSellers();
 
 /** Есть ли продавец в демо-каталоге. Единственный источник правды для
  *  маршрутизации (см. repository.ts): принадлежность к Mock-каталогу
- *  определяется НАЛИЧИЕМ в нём продавца, а не формой ID — суффикс ID у
- *  продавцов каталога числовой (seller-1..seller-24), как и у продавцов
- *  рынка (seller-101..seller-145) и реальных продавцов бэкенда. */
+ *  определяется ЗНАКОМ числового ID — у мок-продавцов он отрицательный
+ *  (seller--1..seller--24; продавцы рынка: seller--101..seller--145),
+ *  у реальных продавцов бэкенда — положительный (seller-6 и т.д.).
+ *  Проверка формы, а не перебор каталога: O(1). */
 export function isMockSeller(id: SellerId | string): boolean {
-  return ALL_SELLERS.some((s) => s.sellerId === id);
+  const num = Number(String(id).replace(/^seller-/, ""));
+  return Number.isFinite(num) && num < 0;
 }
 
 /* ====== Точки торговли (задача «Маркеты») ======
@@ -109,8 +111,9 @@ export function isMockSeller(id: SellerId | string): boolean {
  * точку) с большим числом продавцов: каждый со своим рядом/местом, часами и
  * числом товаров. Данные детерминированы, как и остальной мок. Продавцы
  * рынка НЕ входят в ALL_SELLERS (пин рынка — одно место, список продавцов
- * открывается попапом); их sellerId начинаются со 101, чтобы не
- * конфликтовать с продавцами каталога (seller-1..seller-24).
+ *  открывается попапом); их sellerId отрицательные (seller--101..seller--145),
+ *  чтобы сразу отличать тестовые данные и не конфликтовать с положительными
+ *  ID каталога и бэкенда.
  *
  * 45 продавцов — «большое количество, закреплённое за маркетом»: список
  *  скроллится в попапе и не выталкивает кнопку маршрута за экран. */
@@ -134,7 +137,7 @@ const MARKET_ROWS = ["А", "Б", "В", "Г", "Д", "Е", "Ж", "З", "И", "К",
 
 function buildMarketSellers(): MarketSellerRecord[] {
   return MARKET_KINDS.map((kind, i) => ({
-    sellerId: asSellerId(`seller-${101 + i}`),
+    sellerId: asSellerId(`seller-${-(101 + i)}`),
     name: `Лавка «${kind}»`,
     row: `Ряд ${MARKET_ROWS[i % MARKET_ROWS.length]}`,
     place: `Место ${((i * 7) % 30) + 1}`,

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMap, useMapEvents } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import type { MapAdapterProps } from "@/platform-core/map/gis/MapAdapterTypes";
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
 import { CleanMapTileProvider } from "@/platform-core/map/gis/TileProvider";
+import { createTileFallbackTracker } from "@/platform-core/map/gis/TileFallback";
 import type { MarketId, SellerId } from "@/platform-core/contracts/Action";
 import {
   buildClusterMarkerHtml,
@@ -250,6 +251,76 @@ function MapResizeBridge({ token }: { token: number }) {
   }, [token, map]);
   return null;
 }
+
+/** Смещение панорамирования карты на одно нажатие стрелки (px).
+ *  Пан анимирован ({ animate: true }) — карта плавно «едет», а не прыгает;
+ *  повторы keydown (удержание) перезапускают короткий плавный пан от текущей
+ *  позиции — движение непрерывное, без рывков. */
+const KEYBOARD_PAN_PX = 100;
+
+/** Клавиатурное управление картой: стрелки — панорамирование, «+»/«=» —
+ *  приблизить, «-»/«_» — отдалить. Слушатель на window (работает и без фокуса
+ *  на карте), но НЕ срабатывает, когда фокус в интерактивном элементе (строка
+ *  поиска, поле радиуса, кнопки/ссылки Bottom Sheet) — там стрелки и ввод
+ *  принадлежат этому элементу (текст, перемещение фокуса браузером), а не
+ *  карте. Встроенный Keyboard-обработчик Leaflet отключён (keyboard={false} на
+ *  MapContainer), иначе при фокусе на карте панорамировали бы оба обработчика.
+ *  moveend/zoomend доходят до экрана штатно через MapEventsBridge — runtime
+ *  обновляет центр/зум и перезапрашивает продавцов. */
+function KeyboardPanZoomBridge() {
+  const map = useMap();
+  useEffect(() => {
+    const isInteractiveTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      return Boolean(
+        target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"]'),
+      );
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (isInteractiveTarget(event.target)) return;
+      switch (event.key) {
+        case 'ArrowUp':
+          event.preventDefault();
+          map.panBy([0, -KEYBOARD_PAN_PX], { animate: true });
+          return;
+        case 'ArrowDown':
+          event.preventDefault();
+          map.panBy([0, KEYBOARD_PAN_PX], { animate: true });
+          return;
+        case 'ArrowLeft':
+          event.preventDefault();
+          map.panBy([-KEYBOARD_PAN_PX, 0], { animate: true });
+          return;
+        case 'ArrowRight':
+          event.preventDefault();
+          map.panBy([KEYBOARD_PAN_PX, 0], { animate: true });
+          return;
+        case '+':
+        case '=':
+          event.preventDefault();
+          map.zoomIn();
+          return;
+        case '-':
+        case '_':
+          event.preventDefault();
+          map.zoomOut();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [map]);
+  return null;
+}
+
+/** MAP-037: скелетон загрузки карты — ПОСТОЯННЫЙ фон карты вместо серого поля
+ *  Leaflet (#ddd). Пока тайлы не загрузились (первая загрузка, быстрый пан/зум,
+ *  медленная сеть), сквозь отсутствующие тайлы видна «карта»-скелетон; загруженные
+ *  непрозрачные тайлы полностью закрывают его. Мерцание включается только на время
+ *  реальной загрузки тайлов (события loading/load от TileLayer — они на слое, а НЕ
+ *  на карте, поэтому слушаются через eventHandlers TileLayer, см. ниже).
+ *  Рендерится ВНУТРИ MapContainer: z-index 300 — выше фона контейнера, но ниже
+ *  .leaflet-pane (400), поэтому тайлы и маркеры всегда поверх скелетона. */
+const TILE_LOADING_CLASS = 'gm-map-skeleton--loading';
 
 /** MAP-068 + MAP-026: подписи названий над точками не должны накладываться ни
  *  друг на друга, ни на точки соседних маркеров, ни на бейджи кластеров.
@@ -523,7 +594,39 @@ export function LeafletAdapter({
   sizeChangeToken,
 }: MapAdapterProps) {
   // Выбираем провайдера тайлов в зависимости от настроек POI (MAP-027)
-  const activeTileConfig = hideMapPois ? CleanMapTileProvider : defaultMapConfig.tileProvider;
+  const baseTileConfig = hideMapPois ? CleanMapTileProvider : defaultMapConfig.tileProvider;
+
+  // MAP-036: фолбэк тайлов. Пока основной провайдер жив — TileLayer работает
+  // как обычно; tileerror/tileload фидируют чистый счётчик TileFallback
+  // (порог 6 ошибок подряд без успешной загрузки = провайдер недоступен),
+  // после чего activeTileConfig переключается на резервного провайдера.
+  // Переключение однонаправленное (в рамках сессии обратно не возвращаемся) —
+  // иначе нестабильное соединение «мигало» бы между провайдерами.
+  const tileFallbackTrackerRef = useRef<ReturnType<typeof createTileFallbackTracker> | null>(null);
+  if (tileFallbackTrackerRef.current === null) {
+    tileFallbackTrackerRef.current = createTileFallbackTracker();
+  }
+  const [tileFallbackApplied, setTileFallbackApplied] = useState(false);
+  const handleTileError = useCallback(() => {
+    if (tileFallbackTrackerRef.current?.onTileError()) setTileFallbackApplied(true);
+  }, []);
+  const handleTileLoad = useCallback(() => {
+    tileFallbackTrackerRef.current?.onTileLoad();
+  }, []);
+  // MAP-037: мерцание скелетона — только пока тайлы реально грузятся
+  // (loading/load приходят на САМ TileLayer, а не на карту).
+  const [tilesLoading, setTilesLoading] = useState(false);
+  // Смена базового провайдера (например, переключение POI) даёт новому
+  // провайдеру шанс: сбрасываем фолбэк и счётчик ошибок.
+  useEffect(() => {
+    tileFallbackTrackerRef.current?.reset();
+    setTileFallbackApplied(false);
+  }, [baseTileConfig.urlTemplate]);
+
+  // Активный конфиг: фолбэк применяется только если у базового провайдера он
+  // задан (у Esri — нет, он сам резервный).
+  const activeTileConfig =
+    tileFallbackApplied && baseTileConfig.fallback ? baseTileConfig.fallback : baseTileConfig;
 
   // Позиции ломаной маршрута (MAP-020): [lat, lng] в порядке «пользователь →
   // продавец». Маршрут рисуется под маркерами (LayerOrder — сначала в JSX).
@@ -543,7 +646,10 @@ export function LeafletAdapter({
     // data-testid on a wrapper div (rather than on MapContainer itself, whose typed
     // props don't include arbitrary data-* attributes) — IMP-003.1 §3: this remains
     // the only file that touches "leaflet"/"react-leaflet" directly.
-    <div data-testid="leaflet-map" style={containerStyle}>
+    // tabIndex: обёртка попадает в порядок Tab, чтобы клавиатурное управление
+    // (KeyboardPanZoomBridge) было заметным — фокус на карте подсвечивается
+    // кольцом в map.css (.gm-map-keyboard-target).
+    <div data-testid="leaflet-map" className="gm-map-keyboard-target" tabIndex={0} style={containerStyle}>
       <MapContainer
         center={[camera.center.lat, camera.center.lng]}
         zoom={camera.zoom}
@@ -553,6 +659,7 @@ export function LeafletAdapter({
         doubleClickZoom={defaultMapConfig.enableDoubleClickZoom}
         dragging
         touchZoom
+        keyboard={false}
         style={{ width: "100%", height: "100%" }}
         zoomControl={false}
         attributionControl={true}
@@ -564,6 +671,15 @@ export function LeafletAdapter({
           maxZoom={activeTileConfig.maxZoom}
           maxNativeZoom={activeTileConfig.maxZoom}
           minZoom={activeTileConfig.minZoom}
+          eventHandlers={{
+            // MAP-036: счётчик ошибок → переключение на резервного провайдера.
+            tileerror: handleTileError,
+            tileload: handleTileLoad,
+            // MAP-037: loading/load — события САМОГО TileLayer (на карту они
+            // не приходят); управляют мерцанием скелетона-фона карты.
+            loading: () => setTilesLoading(true),
+            load: () => setTilesLoading(false),
+          }}
         />
         <MapEventsBridge
           onCameraChange={onCameraChange}
@@ -574,6 +690,12 @@ export function LeafletAdapter({
         <CenterRequestBridge token={centerRequestToken} camera={camera} />
         <FitRouteBridge token={fitRouteRequestToken} route={route} />
         <MapResizeBridge token={sizeChangeToken} />
+        <KeyboardPanZoomBridge />
+        <div
+          className={tilesLoading ? `gm-map-skeleton ${TILE_LOADING_CLASS}` : 'gm-map-skeleton'}
+          data-testid="map-skeleton"
+          aria-hidden="true"
+        />
         <LabelCollisionBridge selectedSellerId={selectedSellerId} />
 
         {userLocation && (

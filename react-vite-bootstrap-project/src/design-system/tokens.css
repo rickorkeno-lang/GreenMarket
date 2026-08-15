@@ -204,10 +204,10 @@
   --z-tooltip: 1300;
 
   /* Motion */
-  --duration-instant: 80ms;
-  --duration-fast: 140ms;
-  --duration-normal: 220ms;
-  --duration-slow: 320ms;
+  --duration-instant: 120ms;
+  --duration-fast: 210ms;
+  --duration-normal: 330ms;
+  --duration-slow: 480ms;
   --easing-standard: cubic-bezier(0.2, 0, 0, 1);
   --easing-decelerate: cubic-bezier(0, 0, 0, 1);
   --easing-accelerate: cubic-bezier(0.3, 0, 1, 1);

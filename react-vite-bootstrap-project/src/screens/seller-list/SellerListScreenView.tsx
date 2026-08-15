@@ -24,6 +24,7 @@ import { InitialsFormatter } from '@/platform-core/formatting/InitialsFormatter'
 import { RatingFormatter } from '@/platform-core/formatting/RatingFormatter';
 import { DistanceFormatter } from '@/platform-core/formatting/DistanceFormatter';
 import { SellerFilter } from '@/screens/filter/SellerFilter';
+import { useIsMobile } from '@/app/useIsMobile';
 
 /**
  * Экран «Все продавцы» (переход Map → Seller List, AR-003). ТЗ-024 §10:
@@ -73,6 +74,10 @@ function sellerStatusRank(seller: SellerMapRecord): number {
 export function SellerListScreenView() {
   const { state, dispatch } = useGreenMarketRuntime();
   const mapState = useSyncExternalStore(MapRuntime.subscribe, MapRuntime.getState);
+  // Шапка списка на мобильных и десктопе структурно разная (поиск/фильтр в
+  // разных местах), поэтому рендерим ту или иную разметку по брейкпоинту —
+  // десктоп остаётся как был, фиксы наложений работают только на узких экранах.
+  const isMobile = useIsMobile();
   const [loadState, setLoadState] = useState<SellerListLoadState>('loading');
   const [sellers, setSellers] = useState<SellerMapRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -270,98 +275,150 @@ export function SellerListScreenView() {
   const showModeSwitch = searchFocused && !isSearchActive;
   const switchLabel = isProductMode ? 'Искать по названию' : 'Искать по товару';
 
+  // Фильтр и форма поиска используются в обеих ветках шапки (мобильная и
+  // десктопная), но в разных местах: вынесены в константы, чтобы разметка
+  // не дублировалась.
+  const filterControl = (
+    <SellerFilter
+      categories={mapState.categories}
+      selectedFilters={mapState.selectedFilters}
+      onChange={handleFilterChange}
+    />
+  );
+
+  const searchForm = (
+    <form onSubmit={(e) => e.preventDefault()} role="search">
+      <input
+        type="search"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        onFocus={() => setSearchFocused(true)}
+        onBlur={() => setSearchFocused(false)}
+        placeholder={isProductMode ? 'Найти продавца по товару' : 'Найти продавца'}
+        aria-label={isProductMode ? 'Найти продавца по товару' : 'Поиск продавца'}
+        data-testid="seller-list-search"
+        style={{
+          width: '100%',
+          height: 36,
+          borderRadius: 'var(--radius-full)',
+          border: '1px solid var(--color-border-default)',
+          padding: '0 var(--space-md)',
+          fontFamily: 'var(--font-family-body)',
+          fontSize: 'var(--font-size-sm)',
+          background: 'var(--color-surface-sunken)',
+          color: 'var(--color-text-primary)',
+        }}
+      />
+      {showModeSwitch && (
+        <button
+          type="button"
+          className="gm-map-search__mode-switch gm-focusable"
+          data-testid="seller-list-search-mode-switch"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => handleModeChange(isProductMode ? 'name' : 'product')}
+        >
+          {switchLabel}
+        </button>
+      )}
+      {isProductMode && productNames && productNames.length > 0 && (
+        <div className="gm-map-search__dropdown" role="listbox" data-testid="seller-list-product-suggestions">
+          {productNames.map((p) => (
+            <button
+              key={`product-${p.name}`}
+              type="button"
+              role="option"
+              className="gm-map-search__suggestion gm-focusable"
+              onClick={() => handleProductNameSelect(p.name)}
+            >
+              <span className="gm-map-search__suggestion-icon" aria-hidden="true">
+                {p.emoji}
+              </span>
+              <span className="gm-map-search__suggestion-body">
+                <span className="gm-map-search__suggestion-name">{p.name}</span>
+                {p.sellerCount > 0 && (
+                  <span className="gm-map-search__suggestion-meta">
+                    у {p.sellerCount} продавцов · от {p.minPrice} ₽
+                  </span>
+                )}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </form>
+  );
+
   return (
     <div data-testid="seller-list-screen" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <Header>
-        <Row gap="md" align="center" justify="between" style={{ position: 'relative', width: '100%' }}>
-          <Row gap="sm" align="center">
-            {!atRoot && (
-              <IconButton label="Назад" onClick={handleBack} data-testid="seller-list-back">
-                <Icon label="Назад">←</Icon>
-              </IconButton>
-            )}
-            <Text variant="title" as="span">
-              Все продавцы
-            </Text>
-          </Row>
-          <div
-            className="gm-seller-list-search"
-            style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 360 }}
-          >
-            <form onSubmit={(e) => e.preventDefault()} role="search">
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setSearchFocused(false)}
-                placeholder={isProductMode ? 'Найти продавца по товару' : 'Найти продавца'}
-                aria-label={isProductMode ? 'Найти продавца по товару' : 'Поиск продавца'}
-                data-testid="seller-list-search"
-                style={{
-                  width: '100%',
-                  height: 36,
-                  borderRadius: 'var(--radius-full)',
-                  border: '1px solid var(--color-border-default)',
-                  padding: '0 var(--space-md)',
-                  fontFamily: 'var(--font-family-body)',
-                  fontSize: 'var(--font-size-sm)',
-                  background: 'var(--color-surface-sunken)',
-                  color: 'var(--color-text-primary)',
-                }}
-              />
-              {showModeSwitch && (
-                <button
-                  type="button"
-                  className="gm-map-search__mode-switch gm-focusable"
-                  data-testid="seller-list-search-mode-switch"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => handleModeChange(isProductMode ? 'name' : 'product')}
-                >
-                  {switchLabel}
-                </button>
+      {/* Десктопная шапка (как было до мобильной вёрстки): «назад» и заголовок
+          слева, поиск по центру (absolute, max-width 360), фильтр и счётчик
+          «N продавцов» — справа. Штатная высота панели (56px). */}
+      {!isMobile && (
+        <Header>
+          <Row gap="md" align="center" justify="between" style={{ position: 'relative', width: '100%' }}>
+            <Row gap="sm" align="center">
+              {!atRoot && (
+                <IconButton label="Назад" onClick={handleBack} data-testid="seller-list-back">
+                  <Icon label="Назад">←</Icon>
+                </IconButton>
               )}
-              {isProductMode && productNames && productNames.length > 0 && (
-                <div className="gm-map-search__dropdown" role="listbox" data-testid="seller-list-product-suggestions">
-                  {productNames.map((p) => (
-                    <button
-                      key={`product-${p.name}`}
-                      type="button"
-                      role="option"
-                      className="gm-map-search__suggestion gm-focusable"
-                      onClick={() => handleProductNameSelect(p.name)}
-                    >
-                      <span className="gm-map-search__suggestion-icon" aria-hidden="true">
-                        {p.emoji}
-                      </span>
-                      <span className="gm-map-search__suggestion-body">
-                        <span className="gm-map-search__suggestion-name">{p.name}</span>
-                        {p.sellerCount > 0 && (
-                          <span className="gm-map-search__suggestion-meta">
-                            у {p.sellerCount} продавцов · от {p.minPrice} ₽
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </form>
-          </div>
-          <Row gap="sm" align="center">
-            <SellerFilter
-              categories={mapState.categories}
-              selectedFilters={mapState.selectedFilters}
-              onChange={handleFilterChange}
-            />
-            {loadState === 'ready' && (
-              <Text variant="caption" tone="secondary" data-testid="seller-list-count">
-                {(isProductMode ? visibleProductMatches.length : visibleSellers.length)} продавцов
+              <Text variant="title" as="span">
+                Все продавцы
               </Text>
-            )}
+            </Row>
+            <div
+              className="gm-seller-list-search"
+              style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 360 }}
+            >
+              {searchForm}
+            </div>
+            <Row gap="sm" align="center">
+              {filterControl}
+              {loadState === 'ready' && (
+                <Text variant="caption" tone="secondary" data-testid="seller-list-count">
+                  {(isProductMode ? visibleProductMatches.length : visibleSellers.length)} продавцов
+                </Text>
+              )}
+            </Row>
           </Row>
-        </Row>
-      </Header>
+        </Header>
+      )}
+
+      {/* Мобильная шапка — вертикальная панель из трёх строк: строка 1 —
+          заголовок слева и количество продавцов справа, строка 2 — фильтр по
+          центру, строка 3 — поиск на всю ширину. Высота панели авто (не 56px),
+          чтобы строки не накладывались друг на друга. */}
+      {isMobile && (
+        <Header className="gm-seller-list-header" style={{ height: 'auto' }}>
+          <Stack gap="sm" style={{ width: '100%', padding: 'var(--space-md) 0' }}>
+            <Row gap="sm" align="center" justify="between" style={{ width: '100%' }}>
+              <Row gap="sm" align="center">
+                {!atRoot && (
+                  <IconButton label="Назад" onClick={handleBack} data-testid="seller-list-back">
+                    <Icon label="Назад">←</Icon>
+                  </IconButton>
+                )}
+                <Text variant="title" as="span">
+                  Все продавцы
+                </Text>
+              </Row>
+              {loadState === 'ready' && (
+                <Text variant="caption" tone="secondary" data-testid="seller-list-count">
+                  {(isProductMode ? visibleProductMatches.length : visibleSellers.length)} продавцов
+                </Text>
+              )}
+            </Row>
+
+            <Row justify="center" style={{ width: '100%' }}>
+              {filterControl}
+            </Row>
+
+            <div className="gm-seller-list-search">
+              {searchForm}
+            </div>
+          </Stack>
+        </Header>
+      )}
 
       <Content style={{ overflowY: 'auto' }}>
         {loadState === 'loading' && (

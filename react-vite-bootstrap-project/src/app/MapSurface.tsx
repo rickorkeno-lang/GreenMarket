@@ -46,7 +46,7 @@ export function MapSurface() {
   }
 
   return (
-    <div ref={surfaceRef} className="gm-map-surface" data-testid="map-surface" style={{ height: '100vh' }}>
+    <div ref={surfaceRef} className="gm-map-surface" data-testid="map-surface">
       <MapScreenView
         isFullscreen={isFullscreen}
         fullscreenSupported={fullscreenSupported}
