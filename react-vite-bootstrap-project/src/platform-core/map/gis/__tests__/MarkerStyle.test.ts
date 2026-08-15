@@ -206,6 +206,25 @@ function run() {
   const selClosedHtml = buildSellerMarkerHtml("Закрытый выбранный", asSellerId("s9"), "selected", sel, { kind: "circle" }, { kind: "closed" });
   assert.ok(selClosedHtml.includes("gm-map-marker__dot--selected"), "selected+closed → --selected");
   assert.ok(!selClosedHtml.includes("gm-map-marker__dot--disabled"), "selected+closed → без --disabled (статус не перекрашивает выбранную точку)");
+  // Доступность: выбор ортогонален статусу, поэтому aria-label сохраняет ОБЕ
+  // оси — «название, статус, выбран», а не «название, выбран» (закрытый
+  // выбранный продавец не теряет свой статус для скринридера).
+  assert.ok(
+    selClosedHtml.includes('aria-label="Закрытый выбранный, закрыт, выбран"'),
+    "selected+closed: aria-label сохраняет статус (закрыт, выбран)",
+  );
+  assert.ok(
+    buildSellerMarkerHtml("Выбранный открытый", asSellerId("s10"), "selected", sel, { kind: "circle" }, { kind: "plain" }).includes(
+      'aria-label="Выбранный открытый, открыт, выбран"',
+    ),
+    "selected+open: aria-label = открыт, выбран",
+  );
+  assert.ok(
+    buildSellerMarkerHtml("Выбранный без статуса", asSellerId("s11"), "selected", sel, { kind: "circle" }, { kind: "faded" }).includes(
+      'aria-label="Выбранный без статуса, статус неизвестен, выбран"',
+    ),
+    "selected+faded: aria-label = статус неизвестен, выбран",
+  );
 
   // ---- buildClusterMarkerHtml: бейдж + точка, count и data-testid ----
   const cluster = buildClusterMarkerHtml(7);

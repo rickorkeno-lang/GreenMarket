@@ -28,9 +28,16 @@ import { MapFabButton } from '@/screens/map/MapFabButton';
 import { MapSearchAutocomplete } from '@/screens/map/MapSearchAutocomplete';
 import { SellerFilter } from '@/screens/filter/SellerFilter';
 import { useTheme } from '@/design-system/useTheme';
+import { useIsMobile } from '@/app/useIsMobile';
 
 /** Зум при центрировании на конкретного продавца (поиск / выбор из списка). */
 const ZOOM_ON_SELLER = 15;
+
+/** Длительность плавного появления/исчезания подсказок клавиатуры (мс) вместе с
+ *  запасом на «хвост» transition: задаёт таймер размонтирования после скрытия и
+ *  синхронизирован с transition opacity .gm-map-key-hints в map.css
+ *  (var(--gm-duration-normal) = 330 мс). */
+const KEYBOARD_HINTS_FADE_MS = 350;
 
 /** «Км → метры» для поля радиуса: запятая считается десятичной точкой;
  *  пустое/нечисловое/неположительное значение возвращает null (поиск не
@@ -94,6 +101,10 @@ export function MapScreenView({
   const { dispatch } = useGreenMarketRuntime();
   const mapState = useSyncExternalStore(MapRuntime.subscribe, MapRuntime.getState);
   const theme = useTheme();
+  // Шапка карты на мобильных и десктопе структурно разная (положение поиска и
+  // фильтра), поэтому рендерим ту или иную разметку по брейкпоинту — десктоп
+  // остаётся как был, фиксы наложений работают только на узких экранах.
+  const isMobile = useIsMobile();
 
   const [centerRequestToken, setCenterRequestToken] = useState(0);
   // Токен «показать весь маршрут» (MAP-020): инкрементируется при появлении
@@ -135,6 +146,25 @@ export function MapScreenView({
   // вызов navigator.geolocation в полёте, повторные нажатия «Моё местоположение»
   // игнорируются — иначе множественные разрешения и дублирующие события.
   const geolocationPendingRef = useRef(false);
+  // Клавиатурная навигация: пока зажата «?», на карте показываются подсказки
+  // управления (стрелки-панорамирование + зум). Само управление стрелками и
+  // «+»/«-» живёт в LeafletAdapter (KeyboardPanZoomBridge); здесь — только
+  // видимость подсказок по состоянию клавиши. Два состояния вместо одного:
+  // keyboardHintsMounted держит элемент в DOM до конца fade-out, а
+  // keyboardHintsVisible управляет классом «видим» (opacity 0 ↔ 1) — подсказки
+  // плавно проявляются и так же плавно гаснут, а не исчезают мгновенно.
+  const [keyboardHintsVisible, setKeyboardHintsVisible] = useState(false);
+  const [keyboardHintsMounted, setKeyboardHintsMounted] = useState(false);
+  // Физический код клавиши, которой была зажата «?» (event.code): keyup «?»
+  // может прийти с базовым символом («/» вместо «?»), если сначала отпустить
+  // саму клавишу, а шифт — следом; по коду сопоставление надёжно в любом
+  // порядке отпускания. Также отдельный таймер на размонтирование после fade-out.
+  const questionKeyCodeRef = useRef<string | null>(null);
+  const keyboardHintsTimerRef = useRef<number | null>(null);
+  // Пендинг requestAnimationFrame из showHints (отложенное добавление класса
+  // «видим»): отменяется при скрытии/размонтировании, чтобы запланированный
+  // кадр не «воскресил» подсказки после blur окна.
+  const keyboardHintsRafRef = useRef<number | null>(null);
 
   /** Показывает snackbar об ошибке геолокации (MAP-005 §4) и автоматически
    *  скрывает его через несколько секунд. Повторное нажатие кнопки
@@ -264,6 +294,70 @@ export function MapScreenView({
     },
     [],
   );
+
+  // Клавиатурные подсказки карты: показываются, пока зажата «?» (keydown →
+  // показать, keyup → скрыть; как справочник горячих клавиш). В поле ввода
+  // «?» — обычный символ, подсказки не показываются. По blur окна прячем,
+  // чтобы подсказки не «залипли», если пользователь свернёт окно/переключится
+  // с зажатой клавишей. Скрытие плавное: сначала снимается класс «видим»
+  // (fade-out через CSS transition), и только по истечении
+  // KEYBOARD_HINTS_FADE_MS элемент размонтируется.
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
+    };
+    const showHints = () => {
+      if (keyboardHintsTimerRef.current !== null) {
+        window.clearTimeout(keyboardHintsTimerRef.current);
+        keyboardHintsTimerRef.current = null;
+      }
+      setKeyboardHintsMounted(true);
+      // Монтируем в opacity:0, класс «видим» добавляем на следующем кадре:
+      // иначе при монтировании transition не сыграет и подсказки появятся
+      // рывком, а не плавно.
+      if (keyboardHintsRafRef.current !== null) window.cancelAnimationFrame(keyboardHintsRafRef.current);
+      keyboardHintsRafRef.current = requestAnimationFrame(() => setKeyboardHintsVisible(true));
+    };
+    const hideHints = () => {
+      if (keyboardHintsRafRef.current !== null) {
+        window.cancelAnimationFrame(keyboardHintsRafRef.current);
+        keyboardHintsRafRef.current = null;
+      }
+      setKeyboardHintsVisible(false);
+      if (keyboardHintsTimerRef.current !== null) window.clearTimeout(keyboardHintsTimerRef.current);
+      keyboardHintsTimerRef.current = window.setTimeout(() => setKeyboardHintsMounted(false), KEYBOARD_HINTS_FADE_MS);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === '?' && !event.repeat && !isEditableTarget(event.target)) {
+        questionKeyCodeRef.current = event.code;
+        showHints();
+      }
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      // Сопоставление по физическому коду, а не по event.key: если отпустить
+      // сначала саму клавишу, а шифт — после, keyup приходит с базовым
+      // символом («/»), и по event.key подсказки бы не скрылись.
+      if (questionKeyCodeRef.current !== null && event.code === questionKeyCodeRef.current) {
+        questionKeyCodeRef.current = null;
+        hideHints();
+      }
+    };
+    const handleWindowBlur = () => {
+      questionKeyCodeRef.current = null;
+      hideHints();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleWindowBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleWindowBlur);
+      if (keyboardHintsTimerRef.current !== null) window.clearTimeout(keyboardHintsTimerRef.current);
+      if (keyboardHintsRafRef.current !== null) window.cancelAnimationFrame(keyboardHintsRafRef.current);
+    };
+  }, []);
 
   // ===== Сохранение/восстановление сеанса (MapSessionStore, localStorage) =====
   // Сохраняется ВСЁ состояние карты (NFR-002/NFR-003, ТЗ-005 §6): позиция и
@@ -667,38 +761,70 @@ export function MapScreenView({
 
   const bottomSheetBlocks = useMemo(() => MapBuilder.build(viewModel), [viewModel]);
 
+  // Поиск и фильтр используются в обеих ветках шапки (мобильная и десктопная),
+  // но в разных местах: вынесены в константы, чтобы разметка не дублировалась.
+  const searchBar = (
+    <MapSearchAutocomplete
+      query={searchQuery}
+      searchMode={mapState.productSearch.mode}
+      suggestionsState={mapState.searchSuggestions}
+      productSearch={mapState.productSearch}
+      onQueryChange={handleSearchQueryChange}
+      onModeChange={handleSearchModeChange}
+      onSelect={handleSearchSuggestionSelect}
+      onProductNameSelect={handleProductNameSelect}
+      onProductSellerSelect={handleProductSellerSelect}
+      onSubmit={(query) => void handleSearchSubmit(query)}
+    />
+  );
+
+  const filterControl = (
+    <SellerFilter
+      categories={mapState.categories}
+      selectedFilters={mapState.selectedFilters}
+      onChange={handleFilterChange}
+    />
+  );
+
   return (
-    <div data-testid="map-screen" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div data-testid="map-screen" className="gm-map-screen">
       <Header>
-        <Row gap="md" align="center" justify="between" style={{ position: 'relative', width: '100%' }}>
-          <Text variant="title" as="span">
-            🌿 GreenMarket
-          </Text>
-          <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 360 }}>
-            <MapSearchAutocomplete
-              query={searchQuery}
-              searchMode={mapState.productSearch.mode}
-              suggestionsState={mapState.searchSuggestions}
-              productSearch={mapState.productSearch}
-              onQueryChange={handleSearchQueryChange}
-              onModeChange={handleSearchModeChange}
-              onSelect={handleSearchSuggestionSelect}
-              onProductNameSelect={handleProductNameSelect}
-              onProductSellerSelect={handleProductSellerSelect}
-              onSubmit={(query) => void handleSearchSubmit(query)}
-            />
-          </div>
-          <Row gap="sm">
-            <SellerFilter
-              categories={mapState.categories}
-              selectedFilters={mapState.selectedFilters}
-              onChange={handleFilterChange}
-            />
-            <IconButton label="Список продавцов" onClick={handleOpenSellerList}>
-              <Icon label="Список">📋</Icon>
-            </IconButton>
+        {isMobile ? (
+          /* Мобильная шапка без наложений: лого слева, фильтр правее лого,
+              кнопка списка — справа; строка поиска вынесена ПОД шапку и
+              панель региона (см. .gm-map-search-row ниже). */
+          <Row gap="md" align="center" justify="between" style={{ width: '100%' }}>
+            <Row gap="md" align="center">
+              <Text variant="title" as="span">
+                🌿 GreenMarket
+              </Text>
+              {filterControl}
+            </Row>
+            <Row gap="sm">
+              <IconButton label="Список продавцов" onClick={handleOpenSellerList}>
+                <Icon label="Список">📋</Icon>
+              </IconButton>
+            </Row>
           </Row>
-        </Row>
+        ) : (
+          /* Десктопная шапка (как было до мобильной вёрстки): лого слева,
+              поиск по центру (absolute, max-width 360), фильтр и кнопка
+              списка — справа. */
+          <Row gap="md" align="center" justify="between" style={{ position: 'relative', width: '100%' }}>
+            <Text variant="title" as="span">
+              🌿 GreenMarket
+            </Text>
+            <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 360 }}>
+              {searchBar}
+            </div>
+            <Row gap="sm">
+              {filterControl}
+              <IconButton label="Список продавцов" onClick={handleOpenSellerList}>
+                <Icon label="Список">📋</Icon>
+              </IconButton>
+            </Row>
+          </Row>
+        )}
       </Header>
 
       <div data-testid="current-area-label" style={{ padding: 'var(--space-xs) var(--space-lg)' }}>
@@ -706,6 +832,16 @@ export function MapScreenView({
           📍 {mapState.currentAreaLabel ?? 'Определяется...'}
         </Text>
       </div>
+
+      {/* Поиск — только на мобильных: под верхней панелью и панелью региона,
+          полная ширина, ничего не перекрывает. Дропдаун подсказок
+          позиционируется относительно .gm-map-search и перекрывает карту
+          (z-index tooltip). На десктопе поиск живёт в шапке. */}
+      {isMobile && (
+        <div className="gm-map-search-row" data-testid="map-search-row">
+          {searchBar}
+        </div>
+      )}
 
       <Content style={{ position: 'relative', flex: 1, padding: 0 }}>
         <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
@@ -729,6 +865,39 @@ export function MapScreenView({
             sizeChangeToken={sizeChangeToken}
           />
         </div>
+
+        {/* Клавиатурная навигация (пока зажата «?»): подсказки управления
+            картой. Стрелки-панорамирование — крест-раскладка (D-pad): символ
+            стрелки показывает направление, капса kbd — клавишу. Подсказка
+            зума — правый верхний угол, текст с фоном как у кнопки «Убрать
+            маршрут»; «|» в тексте — перенос строки. pointer-events: none —
+            подсказки не перехватывают клики по карте. */}
+        {keyboardHintsMounted && (
+          <div
+            className={keyboardHintsVisible ? 'gm-map-key-hints gm-map-key-hints--visible' : 'gm-map-key-hints'}
+            data-testid="map-keyboard-hints"
+          >
+            <div className="gm-map-key-hints__pad" role="group" aria-label="Управление картой с клавиатуры">
+              <div className="gm-map-key-hints__cell gm-map-key-hints__cell--up">
+                <kbd>↑</kbd>
+              </div>
+              <div className="gm-map-key-hints__cell gm-map-key-hints__cell--left">
+                <kbd>←</kbd>
+              </div>
+              <div className="gm-map-key-hints__cell gm-map-key-hints__cell--right">
+                <kbd>→</kbd>
+              </div>
+              <div className="gm-map-key-hints__cell gm-map-key-hints__cell--down">
+                <kbd>↓</kbd>
+              </div>
+            </div>
+            <div className="gm-map-key-hints__zoom" data-testid="keyboard-zoom-hint">
+              увеличить зум: +/=
+              <br />
+              уменьшить зум: -/_
+            </div>
+          </div>
+        )}
 
         {/* Плавающая панель действий: белая поверхность, чтобы иконки не
             сливались с картой; кнопки равноудалены (gap = --space-sm). */}
@@ -767,22 +936,40 @@ export function MapScreenView({
           />
         </div>
 
-        {/* «Убрать маршрут» (MAP-020): левый нижний угол, зеркально панели FAB
-            справа. Показывается, пока маршрут построен или строится; клик
-            снимает полилинию (MapRuntime.clearRoute). Текст виден сразу —
-            это не круглая FAB с тултипом, а пилюля с белой поверхностью,
-            как у панели справа: иконка, затем подпись. */}
-        {mapState.route.status !== 'idle' && (
-          <button
-            type="button"
-            className="gm-map-route-clear"
-            onClick={handleClearRoute}
-            data-testid="clear-route"
-          >
-            <span className="gm-map-route-clear__icon" aria-hidden="true">🗺️</span>
-            <span className="gm-map-route-clear__text">Убрать маршрут</span>
-          </button>
-        )}
+        {/* Нижний левый угол: кнопка «Убрать маршрут» (MAP-020) и легенда
+            статусов маркеров. Оба элемента в одном flex-контейнере: кнопка
+            ВСЕГДА выше легенды (порядок в DOM), когда маршрут построен или
+            строится; без маршрута остаётся только легенда. */}
+        <div className="gm-map-bottom-left">
+          {mapState.route.status !== 'idle' && (
+            <button
+              type="button"
+              className="gm-map-route-clear"
+              onClick={handleClearRoute}
+              data-testid="clear-route"
+            >
+              <span className="gm-map-route-clear__icon" aria-hidden="true">🗺️</span>
+              <span className="gm-map-route-clear__text">Убрать маршрут</span>
+            </button>
+          )}
+          {/* Легенда статусов: зелёный — открыто, красный — закрыто, серый —
+              неизвестно. Без заголовка «Легенда» (подпись не нужна). Квадраты
+              декоративные (aria-hidden) — текст читается скринридером. */}
+          <div className="gm-map-legend" data-testid="map-legend">
+            <div className="gm-map-legend__item">
+              <span className="gm-map-legend__swatch gm-map-legend__swatch--open" aria-hidden="true" />
+              <span>Открыто сейчас</span>
+            </div>
+            <div className="gm-map-legend__item">
+              <span className="gm-map-legend__swatch gm-map-legend__swatch--closed" aria-hidden="true" />
+              <span>Закрыто сейчас</span>
+            </div>
+            <div className="gm-map-legend__item">
+              <span className="gm-map-legend__swatch gm-map-legend__swatch--unknown" aria-hidden="true" />
+              <span>Статус неизвестен</span>
+            </div>
+          </div>
+        </div>
 
         {/* Сбой загрузки точек торговли (замечание №1): вместо молчаливо
             пустой карты — заметный баннер с кнопкой «Повторить» (повтор

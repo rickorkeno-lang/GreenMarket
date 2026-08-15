@@ -179,7 +179,7 @@ async function run() {
   // save → localStorage, load возвращает тот же снапшот (кеш обновлён save'ом).
   const snapshot = validSnapshot();
   MapSessionStore.save(snapshot);
-  assert.equal(storage.has("gm.map.session.v1"), true, "save пишет в localStorage");
+  assert.equal(storage.has("gm.map.session.v2"), true, "save пишет в localStorage");
   assert.deepEqual(MapSessionStore.load(), snapshot, "load возвращает сохранённый снапшот");
 
   // saveThrottled — троттлинг с trailing-записью: ведущий вызов в окне пишет

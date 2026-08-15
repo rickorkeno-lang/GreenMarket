@@ -31,6 +31,47 @@
   background: var(--color-surface-base);
 }
 
+/* ---------- Фиксация карты на мобильных (не скроллится) ----------
+ * 100vh в мобильных браузерах больше видимой области (адресная строка), из-за
+ * чего страница получала скролл, и жест, начатый на оверлее (легенда, панель
+ * FAB), «листал» карту. 100dvh — динамическая высота видимой области (правило
+ * ниже перекрывает 100vh там, где dvh поддерживается), overflow: hidden
+ * исключает любой остаточный скролл — карта зафиксирована. */
+.gm-map-surface,
+.gm-map-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* Строка поиска: под шапкой и панелью региона, полная ширина; дропдаун
+ * подсказок позиционируется относительно .gm-map-search и перекрывает карту
+ * (z-index tooltip), поэтому row не задаёт собственный stacking-контекст. */
+.gm-map-search-row {
+  flex: none;
+  padding: var(--space-sm) var(--space-lg) var(--space-xs);
+}
+
+/* Поиск в шапке списка «Все продавцы»: обычный (не абсолютный) элемент на всю
+ * ширину в мобильной 3-строчной шапке; position: relative — якорь для
+ * переключателя режима и дропдауна подсказок (абсолютные, как у .gm-map-search
+ * на карте). В десктопной шапке тот же класс получает абсолютное
+ * позиционирование по центру через inline-стили (см. SellerListScreenView). */
+.gm-seller-list-search {
+  position: relative;
+  width: 100%;
+}
+
+/* Оверлеи поверх карты не должны ни панорамировать карту, ни скроллить
+ * страницу жестом, начатым на них: touch-action: none отдаёт весь жест самому
+ * элементу, а не браузеру/карте (легенда — крупный статичный оверлей). */
+.gm-map-bottom-left,
+.gm-map-fab-panel {
+  touch-action: none;
+}
+
 
 /* ---------- Маршрут до продавца (MAP-020) ----------
  * Полилиния OSRM рисуется двумя слоями: белая подложка (контраст с любыми
@@ -123,12 +164,15 @@
 /* ---------- Map UI: панель плавающих кнопок (нижний правый угол) ----------
  * Белая поверхность (--color-surface-raised), чтобы иконки не сливались
  * с картой; кнопки равноудалены друг от друга и от краёв панели
- * (gap + padding = --space-sm). */
+ * (gap + padding = --space-sm). z-index 11 — ВЫШЕ нижнего левого угла
+ * (легенда/«Убрать маршрут», z-index 10): панель создаёт свой stacking-контекст,
+ * поэтому тултипы кнопок (z-index --z-tooltip внутри панели) в итоге лежат
+ * НАД легендой, а не под ней. Ниже клавиатурных подсказок (z-index 20). */
 .gm-map-fab-panel {
   position: absolute;
   right: var(--space-lg);
   bottom: var(--space-xxl);
-  z-index: 10;
+  z-index: 11;
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
@@ -162,17 +206,33 @@
   animation: gm-map-fab-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
 }
 
-/* «Убрать маршрут» (MAP-020): левый нижний угол, зеркально панели FAB
- * справа. Показывается, пока маршрут построен или строится; клик снимает
- * полилинию. Это не круглая FAB с тултипом, а пилюля с постоянно видимым
- * текстом — белая поверхность (как у панели справа): иконка, затем подпись. */
-.gm-map-route-clear {
+/* ---------- Нижний левый угол: «Убрать маршрут» + легенда статусов ----------
+ * Оба элемента в одном flex-контейнере (column), поэтому кнопка ВСЕГДА выше
+ * легенды, когда маршрут построен или строится (gap + padding = --space-sm);
+ * без маршрута остаётся только легенда. align-items по умолчанию (stretch):
+ * кнопка и легенда растягиваются до ОДНОЙ ширины (по самому широкому элементу),
+ * поэтому легенда выровнена по кнопке «Убрать маршрут». Зеркально панели FAB
+ * справа. */
+.gm-map-bottom-left {
   position: absolute;
   left: var(--space-lg);
   bottom: var(--space-xxl);
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* «Убрать маршрут» (MAP-020): пилюля с постоянно видимым текстом — белая
+ * поверхность (как у панели справа): иконка, затем подпись. Показывается,
+ * пока маршрут построен или строится; клик снимает полилинию. Это flex-элемент
+ * контейнера .gm-map-bottom-left (позиционирование не задаёт сам). Растянут до
+ * ширины легенды — содержимое центрировано, чтобы пилюля с пустым краем не
+ * выглядела обрезанной. */
+.gm-map-route-clear {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   border: var(--border-width-hairline) solid var(--color-border-default);
@@ -200,10 +260,232 @@
   line-height: 1;
 }
 
+/* Легенда статусов маркеров (левый нижний угол, под кнопкой маршрута).
+ * Три строки «квадрат + подпись» без заголовка: зелёный — открыто, красный —
+ * закрыто, серый — неизвестно. Крупнее кнопки (шрифт md, квадраты 16px), та же
+ * белая поверхность; ширина = ширине кнопки «Убрать маршрут» (stretch общего
+ * контейнера). */
+.gm-map-legend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  box-shadow: var(--elevation-3);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-md);
+}
+
+.gm-map-legend__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  white-space: nowrap;
+}
+
+.gm-map-legend__swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.gm-map-legend__swatch--open {
+  background: var(--color-brand-primary-light);
+}
+
+.gm-map-legend__swatch--closed {
+  background: var(--color-danger);
+}
+
+.gm-map-legend__swatch--unknown {
+  background: var(--color-disabled-content);
+}
+
+/* ---------- Клавиатурная навигация: подсказки (пока зажата «?») ----------
+ * Показываются, пока пользователь держит «?» (keydown/keyup в MapScreenView).
+ * Стрелки-панорамирование — крест-раскладка (D-pad) внизу по центру карты:
+ * символ стрелки показывает направление, капса kbd — клавишу. Подсказка зума —
+ * правый верхний угол, та же белая пилюля, что у кнопки «Убрать маршрут».
+ * pointer-events: none — оверлей не перехватывает клики по карте. */
+.gm-map-key-hints {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
+}
+
+/* «Видим» — класс показывает подсказки (opacity 0 → 1). Класс добавляется не в
+ * том же кадре, что и монтирование (requestAnimationFrame в MapScreenView),
+ * иначе transition не сыграет. Скрытие — снятие класса: плавное затухание,
+ * элемент остаётся в DOM ещё KEYBOARD_HINTS_FADE_MS (таймер в MapScreenView). */
+.gm-map-key-hints--visible {
+  opacity: 1;
+}
+
+.gm-map-key-hints__pad {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-xxl);
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  grid-template-areas:
+    '. up .'
+    'left . right'
+    '. down .';
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  box-shadow: var(--elevation-3);
+}
+
+.gm-map-key-hints__cell--up {
+  grid-area: up;
+}
+
+.gm-map-key-hints__cell--down {
+  grid-area: down;
+}
+
+.gm-map-key-hints__cell--left {
+  grid-area: left;
+}
+
+.gm-map-key-hints__cell--right {
+  grid-area: right;
+}
+
+.gm-map-key-hints__pad kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 var(--space-xs);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+  border-bottom-width: var(--border-width-thick);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+}
+
+/* Подсказка зума — правый верхний угол; «|» в тексте заменён переносом строки
+ * (две строки). Копия поверхности кнопки «Убрать маршрут». */
+.gm-map-key-hints__zoom {
+  position: absolute;
+  top: var(--space-lg);
+  right: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  box-shadow: var(--elevation-3);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* Обёртка Leaflet-карты (MapAdapter) — фокус-мишень клавиатурного управления:
+ * попадает в порядок Tab (tabIndex={0}); кольцо фокуса, чтобы было видно, что
+ * стрелки/«+»/«-» теперь управляют картой. */
+.gm-map-keyboard-target:focus-visible {
+  outline: 2px solid var(--color-brand-primary-strong);
+  outline-offset: -2px;
+}
+
 [data-theme='dark'] .gm-map-fab__tooltip {
   background: var(--color-surface-raised);
   color: var(--color-text-primary);
   border: var(--border-width-hairline) solid var(--color-border-default);
+}
+
+/* ---------- MAP-037: скелетон загрузки карты ----------
+ * ПОСТОЯННЫЙ фон карты вместо серого поля Leaflet (#ddd): пока тайлы не
+ * загрузились (первая загрузка, быстрый пан/зум, медленная сеть), сквозь
+ * отсутствующие тайлы видна «карта»-скелетон — иерархия улиц (магистрали →
+ * проезды), пара диагональных авеню, мягкие «районы». Загруженные непрозрачные
+ * тайлы полностью закрывают его, поэтому в покое скелетона не видно.
+ * Рендерится ВНУТРИ .leaflet-container: z-index 300 — ниже .leaflet-pane (400),
+ * поэтому тайлы и маркеры всегда поверх, а controls/атрибуция — тоже поверх.
+ * pointer-events: none — скелетон не перехватывает клики. */
+.gm-map-skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  pointer-events: none;
+  overflow: hidden;
+  background-color: var(--color-surface-sunken);
+  /* «Карта», а не однородная сетка. Слои: проезды → магистрали → авеню →
+   * мягкие «районы» (последний слой списка = нижний). Всё из токенов темы. */
+  background-image:
+    /* проезды — тонкие линии, сдвинуты в середину кварталов магистралей */
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--color-border-subtle) 55%, transparent) 0 1px, transparent 1px 48px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-border-subtle) 55%, transparent) 0 1px, transparent 1px 48px),
+    /* магистрали — заметнее, шаг 96px */
+    repeating-linear-gradient(0deg, var(--color-border-subtle) 0 2px, transparent 2px 96px),
+    repeating-linear-gradient(90deg, var(--color-border-subtle) 0 2px, transparent 2px 96px),
+    /* диагональная авеню №1 */
+    linear-gradient(48deg, transparent 0 42%, color-mix(in srgb, var(--color-border-subtle) 85%, transparent) 42% 44.5%, transparent 44.5% 100%),
+    /* диагональная авеню №2 */
+    linear-gradient(132deg, transparent 0 58%, color-mix(in srgb, var(--color-border-subtle) 70%, transparent) 58% 60%, transparent 60% 100%),
+    /* мягкие «районы» — ломают равномерность, как жилая/парковая застройка */
+    radial-gradient(120% 90% at 18% 12%, color-mix(in srgb, var(--color-surface-raised) 45%, transparent) 0 14%, transparent 52%),
+    radial-gradient(100% 80% at 82% 78%, color-mix(in srgb, var(--color-surface-raised) 40%, transparent) 0 12%, transparent 48%);
+  background-position:
+    24px 24px,
+    24px 24px,
+    0 0,
+    0 0,
+    0 0,
+    0 0,
+    0 0,
+    0 0;
+}
+
+/* Мерцание — диагональная полоса поверх «карты» (::after вместо анимации
+ * background-position: дешевле для композитора и не дёргает репаint фона).
+ * По умолчанию ::after стоит за экраном (translateX(-100%)) — невидим;
+ * анимация (класс --loading, события loading/load TileLayer) гоняет его по
+ * карте только пока тайлы реально грузятся, в покое не жжёт композицию.
+ * Длительность конкретная (как gm-loader переопределяет свой токен): полный
+ * проход мерцания по карте за 1.4s — а --duration-slow (480мс) был бы рывком. */
+.gm-map-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    100deg,
+    transparent 35%,
+    color-mix(in srgb, var(--color-surface-raised) 65%, transparent) 50%,
+    transparent 65%
+  );
+}
+
+.gm-map-skeleton--loading::after {
+  animation: gm-map-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes gm-map-skeleton-shimmer {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 /* ---------- Сбой загрузки точек торговли (замечание №1) ----------
@@ -435,6 +717,17 @@
   .gm-map-search__mode-switch,
   .gm-map-markets-error,
   .gm-map-sheet-fade {
+    animation: none;
+  }
+
+  /* Клавиатурные подсказки: без fade (opacity переключается мгновенно). */
+  .gm-map-key-hints {
+    transition: none;
+  }
+
+  /* MAP-037: скелетон карты — статичный фон без мерцания (и без fade, его
+   * и так нет: скелетон всегда под тайлами). */
+  .gm-map-skeleton--loading::after {
     animation: none;
   }
 }
@@ -777,6 +1070,16 @@
 
 .gm-map-search__mode-switch:hover {
   background: var(--color-hover-overlay);
+}
+
+/* Мобильная версия: у тач-устройств hover «прилипает» после первого нажатия
+ * (перекрашенная полупрозрачным overlay кнопка выглядит прозрачной), поэтому
+ * перекрашивание этой кнопки на узких экранах отключено вовсе — фон остаётся
+ * поверхностью из базового правила. */
+@media (max-width: 767.98px) {
+  .gm-map-search__mode-switch:hover {
+    background: var(--color-surface-raised);
+  }
 }
 
 /* «Возможно вы имели в виду» (поиск по товару, схожесть >85%): поясняющая

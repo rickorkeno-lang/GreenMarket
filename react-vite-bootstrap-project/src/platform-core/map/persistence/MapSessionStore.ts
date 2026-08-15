@@ -47,7 +47,7 @@ export interface MapSessionSnapshot {
   hideMapPois: boolean;
 }
 
-const STORAGE_KEY = "gm.map.session.v1";
+const STORAGE_KEY = "gm.map.session.v2";
 
 /** Периодическое сохранение сеанса (best-effort): MapScreenView подписан на
  *  изменения runtime и вызывает saveThrottled — пишем не чаще раза в интервал,
