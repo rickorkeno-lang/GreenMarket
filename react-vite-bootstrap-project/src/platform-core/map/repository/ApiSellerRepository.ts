@@ -1,4 +1,5 @@
-import { asMarketId, asSellerId, type MarketId, type SellerId } from '@/platform-core/contracts/Action';
+import { asCategoryId, PRODUCT_AVAILABILITY_ORDER } from '@/platform-core/contracts/DomainTypes';
+import { asMarketId, asProductId, asSellerId, type MarketId, type SellerId } from '@/platform-core/contracts/Action';
 import type {
   GeoPoint,
   MapBounds,
@@ -64,6 +65,33 @@ interface BackendSellerDetail {
   whatsapp: string | null;
 }
 
+/** Строка каталога продавца (GET /sellers/{id}/products, контракт 12.08.2026).
+ *  name — собственное наименование продавца, catalog_name — эталонное из
+ *  справочника; API отдаёт оба намеренно (каталог продавца показывает его
+ *  товар его словами, по эталонному идёт переход на общую карточку товара). */
+interface BackendSellerProduct {
+  seller_product_id: number;
+  product_id: number;
+  name: string;
+  catalog_name: string;
+  group_id: number;
+  group_name: string;
+  price: string;
+  unit: string;
+  stock: string;
+  description: string | null;
+  origin_country: string | null;
+  supply_date: string | null;
+  photos: string[];
+}
+
+interface BackendSellerProductsResponse {
+  products: BackendSellerProduct[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
 function parseSellerNumericId(id: SellerId | string): number {
   const str = String(id).replace(/^(seller-)+/, '');
   const num = Number(str);
@@ -78,6 +106,85 @@ function isWithinBounds(point: GeoPoint, bounds: MapBounds): boolean {
     point.lng >= bounds.west &&
     point.lng <= bounds.east
   );
+}
+
+/* ====== Каталог товаров продавца (GET /sellers/{id}/products) ======
+ * Бэкенд отдаёт только промодерированные и опубликованные предложения —
+ * total может быть меньше числа строк в книге продавца (штатно). Строка
+ * каталога не содержит доменных полей страницы продавца (availability,
+ * emoji, categoryId, tags) — они выводятся здесь из того, что API даёт:
+ * доступность из остатка, категория из group_id, эмодзи из названия группы,
+ * теги из обоих имён товара. */
+
+const SELLER_PRODUCTS_PAGE_LIMIT = 100;
+const SELLER_PRODUCTS_MAX_TOTAL = 500;
+
+/** Эмодзи товара по названию группы (справочник бэкенда): группе с реальным
+ *  именем («Фрукты», «Мясо»…) соответствует пиктограмма, как у категорий
+ *  мока (см. SellerCardScreenView#CATEGORY_EMOJI). Неизвестная группа — 🛒. */
+const GROUP_EMOJI_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/фрукт|ягод|абрикос|виноград|гранат|банан|яблок|груш|слив|персик|хурм|цитрус|арбуз|дын/, '🍎'],
+  [/овощ|помидор|огур|морков|капуст|свекл|картоф|лук|перец|баклажан|кабачк|тыкв|чеснок|редис|зеленый горошек/, '🥕'],
+  [/мяс|говяд|свинин|баранин|куриц|птиц|фарш|колбас|копчен|шашлык|пельмен|субпродукт/, '🥩'],
+  [/молочн|молок|творог|сыр|сметан|кефир|йогурт|сливк|масло слив/, '🥛'],
+  [/хлеб|выпечк|булоч|пекар|багет|пирог|батон|мука|лепешк|лаваш/, '🍞'],
+  [/мёд|мед|сладост|варенье|джем|конфет|шоколад|халв|чак-чак/, '🍯'],
+  [/рыб|морепродукт|креветк|кальмар|миди|икра|сельд|скумбр/, '🐟'],
+  [/зелен|трав|укроп|петрушк|базилик|мята|салат|шпинат/, '🌿'],
+  [/орех|сухофрукт|изюм|кураг|миндал|финик|кунжут/, '🥜'],
+];
+
+function emojiForGroup(groupName: string | null | undefined): string {
+  const name = (groupName ?? '').toLowerCase();
+  for (const [rule, emoji] of GROUP_EMOJI_RULES) {
+    if (rule.test(name)) return emoji;
+  }
+  return '🛒';
+}
+
+/** Маппинг строки каталога продавца в доменную SellerProductRecord: цену и
+ *  остаток парсим из строк (Decimal сериализуется как JSON string), id — из
+ *  seller_product_id (строка каталога — сущность продавца, не справочника). */
+function mapSellerProduct(product: BackendSellerProduct, numericSellerId: number): SellerProductRecord {
+  const stock = Number(product.stock);
+  const tags = Array.from(
+    new Set(
+      [product.catalog_name, product.name].filter((tag): tag is string => typeof tag === 'string' && tag.length > 0),
+    ),
+  );
+  return {
+    id: asProductId(`seller-${numericSellerId}-product-${product.seller_product_id}`),
+    name: product.name,
+    price: Number(product.price),
+    unit: product.unit,
+    categoryId: asCategoryId(`group-${product.group_id}`),
+    emoji: emojiForGroup(product.group_name),
+    description: product.description ?? '',
+    availability: Number.isFinite(stock) && stock > 0 ? 'available' : 'missing',
+    tags,
+  };
+}
+
+/** Полная выгрузка каталога продавца постранично (page/limit — те же параметры,
+ *  что у общего списка товаров). Страницы считываются, пока не собран total или
+ *  не достигнут предохранительный лимит SELLER_PRODUCTS_MAX_TOTAL (каталог
+ *  продавца на странице — выгрузка целиком, без пагинации в UI). */
+async function fetchSellerProducts(numericSellerId: number): Promise<BackendSellerProduct[]> {
+  const all: BackendSellerProduct[] = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+  while (all.length < total && all.length < SELLER_PRODUCTS_MAX_TOTAL) {
+    const res = await fetch(
+      `${API_BASE}/sellers/${numericSellerId}/products?page=${page}&limit=${SELLER_PRODUCTS_PAGE_LIMIT}`,
+    );
+    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+    const data = (await res.json()) as BackendSellerProductsResponse;
+    all.push(...(data.products ?? []));
+    if (data.products?.length === 0) break;
+    total = data.total ?? all.length;
+    page += 1;
+  }
+  return all;
 }
 
 /**
@@ -157,8 +264,8 @@ export const ApiSellerRepository: SellerRepository = {
     if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
     const seller = (await res.json()) as BackendSellerDetail;
 
-    // Скелет карточки. Так как API товаров ещё не реализовано,
-    // товары сюда инжектирует точка композиции (repository.ts).
+    // Скелет карточки: профиль из API, товары инжектирует точка композиции
+    // (repository.ts) — оттуда же, из реального каталога продавца, а не из мока.
     // Рейтинг/расстояние/доверие бэкенд не отдаёт — поля честно отсутствуют
     // (замечание №2), а не заполняются вымышленными значениями.
     return {
@@ -195,7 +302,7 @@ export const ApiSellerRepository: SellerRepository = {
     };
   },
 
-  // Нижележащие методы НЕ поддерживаются бэкендом на текущем этапе. 
+  // Нижележащие методы НЕ поддерживаются бэкендом на текущем этапе.
   // ApiSellerRepository больше не подсовывает моки втихаря, а честно кидает ошибку.
   async getAllSellers(): Promise<SellerMapRecord[]> { throw new Error('Not implemented in API'); },
   async getVisibleSellers(): Promise<SellerMapRecord[]> { throw new Error('Not implemented in API'); },
@@ -203,7 +310,22 @@ export const ApiSellerRepository: SellerRepository = {
   async searchSellers(): Promise<SellerMapRecord[]> { throw new Error('Not implemented in API'); },
   async findSeller(): Promise<SellerMapRecord | null> { throw new Error('Not implemented in API'); },
   async getCategories(): Promise<CategoryOption[]> { throw new Error('Not implemented in API'); },
-  async getSellerProducts(): Promise<SellerProductRecord[]> { throw new Error('Not implemented in API'); },
+
+  /** Каталог товаров продавца (GET /sellers/{id}/products, контракт 12.08.2026):
+   *  полная выгрузка, отсортированная как требует страница продавца —
+   *  доступные → замены → отсутствующие (замен у API нет, порядок доступные →
+   *  отсутствующие по остатку). Несуществующий/деактивированный продавец — 404
+   *  (HTTP Error), покупателю он просто не существует. */
+  async getSellerProducts(id: SellerId): Promise<SellerProductRecord[]> {
+    const numericId = parseSellerNumericId(id);
+    const products = (await fetchSellerProducts(numericId)).map((product) => mapSellerProduct(product, numericId));
+    return products.sort(
+      (a, b) =>
+        PRODUCT_AVAILABILITY_ORDER[a.availability ?? 'available'] -
+        PRODUCT_AVAILABILITY_ORDER[b.availability ?? 'available'],
+    );
+  },
+
   async getRecommendedSellers(): Promise<RecommendedSeller[]> { throw new Error('Not implemented in API'); },
   async searchProductNames(): Promise<ProductNameSuggestion[]> { throw new Error('Not implemented in API'); },
   async searchSellersByProduct(): Promise<ProductSearchResult> { throw new Error('Not implemented in API'); },

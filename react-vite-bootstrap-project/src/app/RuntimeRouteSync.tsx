@@ -4,8 +4,13 @@ import {
   useGreenMarketRuntime,
   useRuntimeInstance,
 } from '@/platform-core/navigation-runtime-layer/hooks/useGreenMarketRuntime';
-import { currentEntry, type ScreenId } from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
+import {
+  currentEntry,
+  type NavigationEntry,
+  type ScreenId,
+} from '@/platform-core/navigation-runtime-layer/navigation/NavigationStack';
 import { MapRuntime } from '@/platform-core/map/runtime/MapRuntime';
+import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
 import { entryFromPath, isMapSurfaceScreen, pathFromEntry } from '@/app/routeMapping';
 
 /**
@@ -62,6 +67,24 @@ export function RuntimeRouteSync() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- намеренно реагирует только на смену пути
   }, [location.pathname]);
+
+  // MAP-042: телеметрия навигации — screen_view на каждый новый верхний экран
+  // стека (страницы и контент панели: SellerCard/SellerList/ProductCard без URL).
+  // Ставится ПОСЛЕ синхронизации URL → Runtime, чтобы точка входа логировала
+  // реальный экран из URL, а не корневой Catalog по умолчанию.
+  const prevScreenViewRef = useRef<NavigationEntry | null>(null);
+  useEffect(() => {
+    const entry = currentEntry(runtime.getState().navigation);
+    const prev = prevScreenViewRef.current;
+    prevScreenViewRef.current = entry;
+    if (
+      prev === null ||
+      prev.screen !== entry.screen ||
+      JSON.stringify(prev.params) !== JSON.stringify(entry.params)
+    ) {
+      Diagnostics.track('navigation.screen_view', { screen: entry.screen, ...entry.params });
+    }
+  }, [state, runtime]);
 
   // При окончательном уходе с карты маршрут убирается автоматически (MAP-020):
   // полилиния живёт только пока открыта карта-поверхность. ТЗ-024: карта —

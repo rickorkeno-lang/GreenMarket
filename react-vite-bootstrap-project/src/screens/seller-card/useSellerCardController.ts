@@ -8,6 +8,8 @@ import type { SellerCardViewModel } from '@/platform-core/viewmodels/SellerCardV
 import type { SellerMapRecord } from '@/platform-core/map/viewmodels/MapViewModel';
 import type { SellerId } from '@/platform-core/contracts/Action';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
+import { conversionFunnel } from '@/platform-core/diagnostics/ConversionFunnel';
+import { submitProblemReport } from '@/platform-core/diagnostics/LocalReportStore';
 import { sellerStatus, type SellerStatusPresentation } from '@/platform-core/formatting/SellerStatus';
 import { copyTextToClipboard } from '@/platform-core/utils/clipboard';
 import { SellerHistoryStore } from '@/platform-core/map/persistence/SellerHistoryStore';
@@ -27,6 +29,7 @@ import { SellerHistoryStore } from '@/platform-core/map/persistence/SellerHistor
  */
 export type SellerCardPageState = 'loading' | 'error' | 'ready';
 export type ShareNotice = 'ok' | 'error' | null;
+export type ReportDialogState = 'idle' | 'sending' | 'error';
 
 /** Агрегированная view model страницы продавца. Экран рендерит только её. */
 export interface SellerCardPageModel {
@@ -47,12 +50,21 @@ export interface SellerCardPageModel {
   atRoot: boolean;
   /** Состояние Snackbar «Ссылка скопирована» (чисто UI). */
   shareState: ShareNotice;
+  /** true — открыта модалка «Сообщить о проблеме». */
+  reportDialogOpen: boolean;
+  /** Статус отправки репорта в модалке (чисто UI). */
+  reportDialogState: ReportDialogState;
+  /** Состояние Snackbar «Сообщение отправлено» (чисто UI). */
+  reportNotice: ShareNotice;
   onRetry: () => void;
   onBack: () => void;
   onToggleFavorite: () => void;
   onStartRoute: () => void;
   onShare: () => void;
   onOpenRecommendation: (recommendation: RecommendedSeller) => void;
+  onOpenReport: () => void;
+  onCloseReport: () => void;
+  onSubmitReport: (message: string) => void;
 }
 
 const SHARE_NOTICE_TIMEOUT_MS = 4000;
@@ -78,6 +90,10 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
   const [isFavorite, setIsFavorite] = useState(false);
   const [shareState, setShareState] = useState<ShareNotice>(null);
   const shareTimerRef = useRef<number | null>(null);
+  const [reportDialogOpen, setReportDialogOpen] = useState(false);
+  const [reportDialogState, setReportDialogState] = useState<ReportDialogState>('idle');
+  const [reportNotice, setReportNotice] = useState<ShareNotice>(null);
+  const reportTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     setLoadState('loading');
@@ -115,6 +131,7 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
   useEffect(
     () => () => {
       if (shareTimerRef.current !== null) window.clearTimeout(shareTimerRef.current);
+      if (reportTimerRef.current !== null) window.clearTimeout(reportTimerRef.current);
     },
     [],
   );
@@ -123,6 +140,12 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
     setShareState(next);
     if (shareTimerRef.current !== null) window.clearTimeout(shareTimerRef.current);
     shareTimerRef.current = window.setTimeout(() => setShareState(null), SHARE_NOTICE_TIMEOUT_MS);
+  }, []);
+
+  const showReportNotice = useCallback((next: Exclude<ShareNotice, null>) => {
+    setReportNotice(next);
+    if (reportTimerRef.current !== null) window.clearTimeout(reportTimerRef.current);
+    reportTimerRef.current = window.setTimeout(() => setReportNotice(null), SHARE_NOTICE_TIMEOUT_MS);
   }, []);
 
   const handleShare = useCallback(async () => {
@@ -161,9 +184,39 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
   const handleOpenRecommendation = useCallback(
     (recommendation: RecommendedSeller) => {
       Diagnostics.track('seller_card.open_recommendation', { sellerId: recommendation.seller.sellerId });
+      conversionFunnel.begin(recommendation.seller.sellerId, 'recommendation');
       dispatch({ type: 'OPEN_SELLER', payload: { sellerId: recommendation.seller.sellerId } });
     },
     [dispatch],
+  );
+
+  const handleOpenReport = useCallback(() => {
+    setReportDialogOpen(true);
+    setReportDialogState('idle');
+  }, []);
+
+  const handleCloseReport = useCallback(() => {
+    setReportDialogOpen(false);
+    setReportDialogState('idle');
+  }, []);
+
+  const handleSubmitReport = useCallback(
+    async (message: string) => {
+      if (!sellerId || reportDialogState === 'sending') return;
+      const trimmed = message.trim();
+      if (trimmed.length === 0) return;
+      setReportDialogState('sending');
+      const sent = await submitProblemReport({ sellerId, message: trimmed });
+      if (!sent) {
+        setReportDialogState('error');
+        return;
+      }
+      Diagnostics.track('seller_card.report_problem', { sellerId });
+      setReportDialogOpen(false);
+      setReportDialogState('idle');
+      showReportNotice('ok');
+    },
+    [sellerId, reportDialogState, showReportNotice],
   );
 
   const atRoot = isAtRoot(state.navigation);
@@ -172,6 +225,18 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
   const ready = loadState === 'ready';
   const notFound = ready && !record;
   const pageReady = ready && record !== null && card !== null;
+
+  useEffect(() => {
+    if (!pageReady) return;
+    const active = conversionFunnel.current();
+    if (!active || active.sellerId !== sellerId) {
+      conversionFunnel.begin(sellerId, 'other');
+    }
+    conversionFunnel.track('seller_card.catalog_viewed', {
+      sellerId,
+      productCount: products.length,
+    });
+  }, [pageReady, products.length, sellerId]);
 
   return {
     loadState,
@@ -185,11 +250,17 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
     pageReady,
     atRoot,
     shareState,
+    reportDialogOpen,
+    reportDialogState,
+    reportNotice,
     onRetry: () => void load(),
     onBack: handleBack,
     onToggleFavorite: handleToggleFavorite,
     onStartRoute: handleStartRoute,
     onShare: () => void handleShare(),
     onOpenRecommendation: handleOpenRecommendation,
+    onOpenReport: handleOpenReport,
+    onCloseReport: handleCloseReport,
+    onSubmitReport: (message) => void handleSubmitReport(message),
   };
 }

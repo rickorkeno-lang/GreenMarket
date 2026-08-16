@@ -15,6 +15,7 @@ import {
 } from '@/platform-core/map/repository/SellerRepository';
 import { MapSessionStore } from '@/platform-core/map/persistence/MapSessionStore';
 import { Diagnostics } from '@/platform-core/diagnostics/Diagnostics';
+import { conversionFunnel } from '@/platform-core/diagnostics/ConversionFunnel';
 import type {
   CameraParams,
   GeoPoint,
@@ -594,7 +595,12 @@ export function MapScreenView({
     (sellerId?: SellerId) => {
       const target = sellerId ?? mapState.selectedSellerId;
       if (!target) return;
-      Diagnostics.track('map.open_seller_card', { sellerId: target });
+      const funnel = conversionFunnel.begin(target, 'map');
+      Diagnostics.track('map.open_seller_card', {
+        sellerId: target,
+        funnelId: funnel.funnelId,
+        entry: funnel.entry,
+      });
       dispatch({ type: 'OPEN_SELLER', payload: { sellerId: target } });
     },
     [dispatch, mapState.selectedSellerId],
