@@ -57,3 +57,17 @@ export const CleanMapTileProvider: TileProviderConfig = {
   // цена за то, что карта вообще остаётся на экране при отказе провайдера.
   fallback: OpenStreetMapTileProvider,
 };
+
+/** MAP-036: выбор активного конфига тайлов — чистое решение, отделённое от
+ *  React/Leaflet, чтобы связку «счётчик ошибок TileFallback → состояние →
+ *  конфиг» можно было покрыть тестами (см. TileFallback.test.ts).
+ *  Пока фолбэк не применён — базовый провайдер как есть; после применения —
+ *  резервный, НО только если базовый его объявил. Провайдер без fallback
+ *  (Esri — терминальный, он сам резервный) при недоступности остаётся собой:
+ *  фолбэка дальше нет, и это намеренно. */
+export function resolveActiveTileConfig(
+  baseConfig: TileProviderConfig,
+  fallbackApplied: boolean,
+): TileProviderConfig {
+  return fallbackApplied && baseConfig.fallback ? baseConfig.fallback : baseConfig;
+}

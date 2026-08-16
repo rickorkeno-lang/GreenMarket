@@ -11,3 +11,6 @@ vite.config.js
 
 # OSRM routing data (тяжёлые индексированные файлы; используются Node-биндингами @project-osrm/osrm)
 routing/data
+
+# Локальная телеметрия (MAP-041): сырые события не попадают в git
+logs

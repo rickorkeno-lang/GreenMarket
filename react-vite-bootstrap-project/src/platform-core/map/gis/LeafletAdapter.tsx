@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMap, useMapEvents } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import type { MapAdapterProps } from "@/platform-core/map/gis/MapAdapterTypes";
 import { defaultMapConfig } from "@/platform-core/map/gis/MapConfig";
-import { CleanMapTileProvider } from "@/platform-core/map/gis/TileProvider";
+import { CleanMapTileProvider, resolveActiveTileConfig } from "@/platform-core/map/gis/TileProvider";
 import { createTileFallbackTracker } from "@/platform-core/map/gis/TileFallback";
 import type { MarketId, SellerId } from "@/platform-core/contracts/Action";
 import {
@@ -259,23 +259,30 @@ function MapResizeBridge({ token }: { token: number }) {
 const KEYBOARD_PAN_PX = 100;
 
 /** Клавиатурное управление картой: стрелки — панорамирование, «+»/«=» —
- *  приблизить, «-»/«_» — отдалить. Слушатель на window (работает и без фокуса
- *  на карте), но НЕ срабатывает, когда фокус в интерактивном элементе (строка
- *  поиска, поле радиуса, кнопки/ссылки Bottom Sheet) — там стрелки и ввод
- *  принадлежат этому элементу (текст, перемещение фокуса браузером), а не
- *  карте. Встроенный Keyboard-обработчик Leaflet отключён (keyboard={false} на
- *  MapContainer), иначе при фокусе на карте панорамировали бы оба обработчика.
- *  moveend/zoomend доходят до экрана штатно через MapEventsBridge — runtime
- *  обновляет центр/зум и перезапрашивает продавцов. */
-function KeyboardPanZoomBridge() {
+ *  приблизить, «-»/«_» — отдалить. Управление привязано к ФОКУСУ карты, а не
+ *  к window: обработчик висит на обёртке (tabIndex={0}, кольцо фокуса
+ *  .gm-map-keyboard-target), поэтому стрелки/± перехватываются только когда
+ *  фокус на карте — попал в неё по Tab или кликнул по ней. У остальных
+ *  элементов страницы стрелки остаются их собственными (скролл, навигация),
+ *  а не «уводятся» картой. НЕ срабатывает, когда фокус в интерактивном
+ *  элементе ВНУТРИ карты (ссылка атрибуции и т.п.) — там клавиши принадлежат
+ *  элементу, а не карте. Встроенный Keyboard-обработчик Leaflet отключён
+ *  (keyboard={false} на MapContainer), иначе при фокусе на карте панорамировали
+ *  бы оба обработчика. moveend/zoomend доходят до экрана штатно через
+ *  MapEventsBridge — runtime обновляет центр/зум и перезапрашивает продавцов. */
+const MAP_KEYBOARD_INTERACTIVE_SELECTOR =
+  'input, textarea, select, button, a, [contenteditable="true"], [role="button"]';
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(target.closest(MAP_KEYBOARD_INTERACTIVE_SELECTOR));
+}
+
+function KeyboardPanZoomBridge({ containerRef }: { containerRef: RefObject<HTMLDivElement | null> }) {
   const map = useMap();
   useEffect(() => {
-    const isInteractiveTarget = (target: EventTarget | null): boolean => {
-      if (!(target instanceof HTMLElement)) return false;
-      return Boolean(
-        target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"]'),
-      );
-    };
+    const container = containerRef.current;
+    if (!container) return;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (isInteractiveTarget(event.target)) return;
       switch (event.key) {
@@ -306,9 +313,21 @@ function KeyboardPanZoomBridge() {
           map.zoomOut();
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [map]);
+    // Клик по карте (по любому не-интерактивному месту) даёт ей фокус, чтобы
+    // стрелки/± заработали сразу, без лишнего Tab. Фокус по :focus-visible не
+    // подсвечивается кольцом (последнее взаимодействие — указатель), зато
+    // .focus() сам по себе не мешает драгу Leaflet (нет preventDefault).
+    const onPointerDown = (event: PointerEvent): void => {
+      if (isInteractiveTarget(event.target)) return;
+      container.focus({ preventScroll: true });
+    };
+    container.addEventListener('keydown', onKeyDown);
+    container.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      container.removeEventListener('keydown', onKeyDown);
+      container.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [map, containerRef]);
   return null;
 }
 
@@ -614,19 +633,51 @@ export function LeafletAdapter({
     tileFallbackTrackerRef.current?.onTileLoad();
   }, []);
   // MAP-037: мерцание скелетона — только пока тайлы реально грузятся
-  // (loading/load приходят на САМ TileLayer, а не на карту).
+  // (loading/load приходят на САМ TileLayer, а не на карту). Страховочный
+  // watchdog: если loading пришёл, а load — нет (зависший/отменённый запрос
+  // тайла), через TILE_LOAD_WATCHDOG_MS загрузка снимается принудительно —
+  // иначе скелетон мерцал бы бесконечно.
+  const TILE_LOAD_WATCHDOG_MS = 8000;
   const [tilesLoading, setTilesLoading] = useState(false);
+  const tileLoadWatchdogRef = useRef<number | null>(null);
+  const stopTileLoadWatchdog = useCallback(() => {
+    if (tileLoadWatchdogRef.current !== null) {
+      window.clearTimeout(tileLoadWatchdogRef.current);
+      tileLoadWatchdogRef.current = null;
+    }
+  }, []);
+  const handleTilesLoading = useCallback(() => {
+    setTilesLoading(true);
+    stopTileLoadWatchdog();
+    tileLoadWatchdogRef.current = window.setTimeout(() => {
+      tileLoadWatchdogRef.current = null;
+      setTilesLoading(false);
+    }, TILE_LOAD_WATCHDOG_MS);
+  }, [stopTileLoadWatchdog]);
+  const handleTilesLoaded = useCallback(() => {
+    stopTileLoadWatchdog();
+    setTilesLoading(false);
+  }, [stopTileLoadWatchdog]);
+  // Обёртка карты — фокус-мишень клавиатурного управления (tabIndex={0});
+  // KeyboardPanZoomBridge вешает на неё слушатели и клик даёт ей фокус.
+  const mapKeyboardRef = useRef<HTMLDivElement | null>(null);
   // Смена базового провайдера (например, переключение POI) даёт новому
-  // провайдеру шанс: сбрасываем фолбэк и счётчик ошибок.
+  // провайдеру шанс: сбрасываем фолбэк и счётчик ошибок; заодно гасим
+  // watchdog старого слоя, чтобы он не снял загрузку нового.
   useEffect(() => {
     tileFallbackTrackerRef.current?.reset();
     setTileFallbackApplied(false);
-  }, [baseTileConfig.urlTemplate]);
+    stopTileLoadWatchdog();
+  }, [baseTileConfig.urlTemplate, stopTileLoadWatchdog]);
+  // При размонтировании — сброс таймера (setState на размонтированный
+  // компонент не вызывается).
+  useEffect(() => stopTileLoadWatchdog, [stopTileLoadWatchdog]);
 
   // Активный конфиг: фолбэк применяется только если у базового провайдера он
-  // задан (у Esri — нет, он сам резервный).
-  const activeTileConfig =
-    tileFallbackApplied && baseTileConfig.fallback ? baseTileConfig.fallback : baseTileConfig;
+  // задан (у Esri — нет, он сам резервный). Чистая resolveActiveTileConfig
+  // покрыта тестами (TileFallback.test.ts): связка счётчик → состояние →
+  // конфиг, до перемонтирования TileLayer через key.
+  const activeTileConfig = resolveActiveTileConfig(baseTileConfig, tileFallbackApplied);
 
   // Позиции ломаной маршрута (MAP-020): [lat, lng] в порядке «пользователь →
   // продавец». Маршрут рисуется под маркерами (LayerOrder — сначала в JSX).
@@ -649,7 +700,7 @@ export function LeafletAdapter({
     // tabIndex: обёртка попадает в порядок Tab, чтобы клавиатурное управление
     // (KeyboardPanZoomBridge) было заметным — фокус на карте подсвечивается
     // кольцом в map.css (.gm-map-keyboard-target).
-    <div data-testid="leaflet-map" className="gm-map-keyboard-target" tabIndex={0} style={containerStyle}>
+    <div ref={mapKeyboardRef} data-testid="leaflet-map" className="gm-map-keyboard-target" tabIndex={0} style={containerStyle}>
       <MapContainer
         center={[camera.center.lat, camera.center.lng]}
         zoom={camera.zoom}
@@ -676,9 +727,11 @@ export function LeafletAdapter({
             tileerror: handleTileError,
             tileload: handleTileLoad,
             // MAP-037: loading/load — события САМОГО TileLayer (на карту они
-            // не приходят); управляют мерцанием скелетона-фона карты.
-            loading: () => setTilesLoading(true),
-            load: () => setTilesLoading(false),
+            // не приходят); управляют мерцанием скелетона-фона карты. Плюс
+            // страховочный таймер 8 с: зависший запрос тайла не оставляет
+            // скелетон мерцать бесконечно (см. handleTilesLoading).
+            loading: handleTilesLoading,
+            load: handleTilesLoaded,
           }}
         />
         <MapEventsBridge
@@ -690,7 +743,7 @@ export function LeafletAdapter({
         <CenterRequestBridge token={centerRequestToken} camera={camera} />
         <FitRouteBridge token={fitRouteRequestToken} route={route} />
         <MapResizeBridge token={sizeChangeToken} />
-        <KeyboardPanZoomBridge />
+        <KeyboardPanZoomBridge containerRef={mapKeyboardRef} />
         <div
           className={tilesLoading ? `gm-map-skeleton ${TILE_LOADING_CLASS}` : 'gm-map-skeleton'}
           data-testid="map-skeleton"

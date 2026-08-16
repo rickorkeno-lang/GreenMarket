@@ -21,6 +21,7 @@ import { SellerCardActions } from '@/screens/seller-card/SellerCardActions';
 import { SellerCardProducts } from '@/screens/seller-card/SellerCardProducts';
 import { SellerCardReports } from '@/screens/seller-card/SellerCardReports';
 import { SellerCardRecommendations } from '@/screens/seller-card/SellerCardRecommendations';
+import { SellerCardReportDialog } from '@/screens/seller-card/SellerCardReportDialog';
 import { useSellerCardController } from '@/screens/seller-card/useSellerCardController';
 import '@/screens/seller-card/seller-card.css';
 
@@ -205,6 +206,14 @@ export function SellerCardScreenView({ sellerId }: { sellerId: SellerId }) {
                 recommendations={vm.recommendations}
                 onOpen={vm.onOpenRecommendation}
               />
+
+              <Divider />
+
+              <div className="gm-seller-card__report">
+                <Button variant="ghost" onClick={vm.onOpenReport} data-testid="seller-card-report-button">
+                  Сообщить о проблеме
+                </Button>
+              </div>
             </Stack>
           </div>
         )}
@@ -218,6 +227,23 @@ export function SellerCardScreenView({ sellerId }: { sellerId: SellerId }) {
               : 'Ссылка на продавца скопирована в буфер обмена'}
           </Snackbar>
         </SnackbarContainer>
+      )}
+
+      {vm.reportNotice && (
+        <SnackbarContainer>
+          <Snackbar tone={vm.reportNotice === 'error' ? 'error' : 'default'} data-testid="seller-card-report-snackbar">
+            {vm.reportNotice === 'error' ? 'Не удалось отправить сообщение' : 'Сообщение отправлено'}
+          </Snackbar>
+        </SnackbarContainer>
+      )}
+
+      {vm.reportDialogOpen && vm.record && (
+        <SellerCardReportDialog
+          sellerName={vm.record.name}
+          state={vm.reportDialogState}
+          onSubmit={vm.onSubmitReport}
+          onClose={vm.onCloseReport}
+        />
       )}
     </div>
   );
