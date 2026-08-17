@@ -86,6 +86,55 @@ async function run() {
   assert.equal(OfflineCacheStore.read("seller-card:seller-6"), null, "clear очищает весь кэш");
   assert.deepEqual(storage.get("gm.map.offline-cache.v1"), "{}", "clear оставляет пустой объект в хранилище");
 
+  // ---- Overflow / setItem failure: поведение при переполнении хранилища ----
+
+  // Заполняем кэш данными до симуляции переполнения.
+  OfflineCacheStore.write("seller-card:seller-1", { sellerId: "seller-1", name: "До переполнения" });
+  const beforeOverflow = OfflineCacheStore.read("seller-card:seller-1");
+  assert.deepEqual(beforeOverflow, { sellerId: "seller-1", name: "До переполнения" }, "данные записаны до overflow");
+
+  // Подменяем setItem на бросающий исключение (имитация QuotaExceededError).
+  const originalStorage = globalThis.localStorage;
+  let setItemCalled = false;
+  (globalThis as Record<string, unknown>).localStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (_key: string, _value: string) => {
+      setItemCalled = true;
+      throw new Error("QuotaExceededError");
+    },
+    removeItem: (key: string) => storage.delete(key),
+    clear: () => storage.clear(),
+    key: (index: number) => Array.from(storage.keys())[index] ?? null,
+    get length() { return storage.size; },
+  } as Storage;
+
+  // write не должен выбрасывать исключение наружу (подавляется в writeRecord).
+  OfflineCacheStore.write("seller-card:seller-1", { sellerId: "seller-1", name: "После переполнения" });
+  assert.equal(setItemCalled, true, "setItem был вызван (даже при переполнении)");
+
+  // Старые данные в localStorage не были перезаписаны (setItem бросил).
+  const rawAfterOverflow = JSON.parse(storage.get("gm.map.offline-cache.v1") ?? "{}");
+  assert.deepEqual(
+    rawAfterOverflow["seller-card:seller-1"]?.value,
+    { sellerId: "seller-1", name: "До переполнения" },
+    "старые данные в storage не повреждены (setItem не записал)",
+  );
+
+  // read возвращает устаревшие данные из storage (write не обновил storage).
+  const afterOverflow = OfflineCacheStore.read("seller-card:seller-1");
+  assert.deepEqual(
+    afterOverflow,
+    { sellerId: "seller-1", name: "До переполнения" },
+    "read возвращает старые данные (write не прошёл в storage)",
+  );
+
+  // remove и clear тоже не должны падать при переполнении.
+  OfflineCacheStore.remove("seller-card:seller-1");
+  OfflineCacheStore.clear();
+
+  // Восстанавливаем мок.
+  (globalThis as Record<string, unknown>).localStorage = originalStorage;
+
   console.log("OfflineCacheStore: все проверки пройдены");
 }
 

@@ -191,6 +191,10 @@ export function MapScreenView({
       (location) => MapRuntime.dispatch({ type: 'SET_USER_LOCATION', location }),
       (kind) => showLocationNotice(kind),
     );
+    // MAP-038 extension: синхронизация позиции с бэкендом (POST /location).
+    // Отдельный от локального трекинга таймер: fire-and-forget запросы
+    // каждые 10 сек, не блокируют обновление маркера на карте.
+    GeoService.startBackendSync(() => MapRuntime.getState().userLocation);
   }, [showLocationNotice]);
 
   /** Геолокация с общей обработкой ошибок для кнопки «Моё местоположение» и
@@ -240,6 +244,7 @@ export function MapScreenView({
     return () => {
       geoTrackingMountedRef.current = false;
       GeoService.stopTracking();
+      GeoService.stopBackendSync();
     };
   }, [startGeoTracking]);
 

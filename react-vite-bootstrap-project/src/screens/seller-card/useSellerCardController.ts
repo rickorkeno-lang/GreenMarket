@@ -94,6 +94,7 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
   const [reportDialogState, setReportDialogState] = useState<ReportDialogState>('idle');
   const [reportNotice, setReportNotice] = useState<ShareNotice>(null);
   const reportTimerRef = useRef<number | null>(null);
+  const catalogViewedRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoadState('loading');
@@ -227,7 +228,12 @@ export function useSellerCardController(sellerId: SellerId): SellerCardPageModel
   const pageReady = ready && record !== null && card !== null;
 
   useEffect(() => {
-    if (!pageReady) return;
+    catalogViewedRef.current = false;
+  }, [sellerId]);
+
+  useEffect(() => {
+    if (!pageReady || catalogViewedRef.current) return;
+    catalogViewedRef.current = true;
     const active = conversionFunnel.current();
     if (!active || active.sellerId !== sellerId) {
       conversionFunnel.begin(sellerId, 'other');
