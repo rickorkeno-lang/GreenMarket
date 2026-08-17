@@ -1,19 +1,16 @@
 # DOCUMENT_INDEX.md
 
-Полный список всех `.md`-документов репозитория (64 файла, без `node_modules`), полученный обходом дерева, плюс отдельно — содержимое вложенного архива `archive/*.zip` и файлы `examples/`.
+Полный список всех `.md`-документов репозитория (63 файла, без `node_modules`), полученный обходом через Glob-инструмент.
 
-> Изменение против прежней инвентаризации: документ процесса «AI-first Engineering Process» переведён из `AI-first Engineering Process.docx` (удалён) в корневой `AI-first_Engineering_Process.md` — отсюда рост счётчика .md на 1.
+Обновлено 2026-08-17: обновлены счётчики файлов и отражено добавление экрана карточки продавца, расширение домена Map и новых утилит. Удалены `AI-first_Engineering_Process.md` и `archive/` (файлы не найдены на диске).
 
 > Уточнение к предыдущей версии инвентаризации: README сам себя называет «19 ссылок ТЗ + 1 мета-ревью + 1 промпт + 1 ТЗ по FSM Engine + 2 детальные спецификации» в заголовке, а таблица «Список документов» в README содержит 29 строк — но это 29 *хронологических ссылок источника* (нумерация "1…29-я ссылка"), а не диапазон номеров ТЗ. Реальные номера ТЗ, встречающиеся в этой таблице: ТЗ-001…003, 005…011, 013…026 (24 уникальных номера; ТЗ-004, 012 отсутствуют, ТЗ-025 — 2 версии). Максимальный существующий в `docs/specifications/` номер — ТЗ-026. Номеров ТЗ-027…029 в файловой системе репозитория нет (при этом код ссылается на ТЗ-027 — см. TRACEABILITY.md).
 
-## 1. Корень репозитория (2 .md-файла)
+## 1. Корень репозитория (1 .md-файл)
 
 | Файл | Роль |
 |---|---|
 | README.md | Главный индекс: хронология всех 29 ссылок источника, история переносов, известные разрывы нумерации, фактическое состояние кода |
-| AI-first_Engineering_Process.md | Документ процесса «AI-first Development Process MVP v1.0» (ранее — `AI-first Engineering Process.docx`, конвертирован в Markdown) |
-
-Плюс вспомогательный не-md-файл корня: `full_changes.diff` — сводный diff доработок экрана Map (для ревью изменений, не часть документации).
 
 ## 2. docs/ — документация репозитория (30 файлов)
 
@@ -90,21 +87,14 @@ GM-010_STAGE1_MODEL_MAPPING.md — маппинг Stage-1 моделей на э
 
 | Файл | Роль |
 |---|---|
-| FILE_TREE.md | Полное дерево репозитория (290 файлов без node_modules) |
+| FILE_TREE.md | Полное дерево репозитория (349 файлов без node_modules) |
 | DOCUMENT_INDEX.md | Этот документ: полный индекс всех .md-файлов |
 | CODE_INDEX.md | Индекс .ts/.tsx-кода (greenmarket + navigation-runtime-layer + react-vite) |
 | TRACEABILITY.md | Сверка ссылок из кода на ТЗ/GM-DOM/GM-UX/IMP-003 с фактическим наличием файлов |
 
-## 7. Архивный снимок archive/GreenMarket_CustomerUI_v3_2026-07-08_2.zip (31 файл внутри)
+## 7. Архивный снимок archive/ (УДАЛЁН)
 
-Снимок README и части ТЗ по состоянию на 2026-07-08 (более ранняя версия). Состав (проверен распаковкой):
-
-- README.md (27918 байт — против нынешних 31376)
-- ТЗ-спецификации: 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22, 23, 24, 27, 28, 29 (25 файлов)
-- Не-ТЗ: 20_meta_review_struktury_arhiva.md, 21_prompt_fsm_engine_sovmestimost.md, 25_review_arhiva_posle_dobavleniya_tz023_024.md, 26_rekomendacii_svyazannye_dokumenty_i_chitatel.md
-- BottomSheetDeclarative_3.jsx (45751 байт — совпадает по размеру с копией в examples/)
-
-> Уточнение к прежней редакции: ранее в описании значилось «12 файлов ТЗ (06–19, 21)» — фактически в архиве 25 файлов серии ТЗ (01–19, 22, 23, 24, 27, 28, 29). Внутри архива файл 29 называется `29_tz025_kartochka_prodavtsa_v1.1.md`, а в текущем дереве — `29_tz025_kartochka_prodavtsa_candidate_v1.1.md` (переименование при распаковке, содержание предполагается тем же).
+Директория `archive/` с zip-снимоком `GreenMarket_CustomerUI_v3_2026-07-08_2.zip` (31 файл) была удалена из репозитория. Содержимое архива ранее описывалось как снимок README и части ТЗ по состоянию на 2026-07-08.
 
 ## 8. examples/ (не .md, но документо-подобные референсы)
 
@@ -116,15 +106,15 @@ GM-010_STAGE1_MODEL_MAPPING.md — маппинг Stage-1 моделей на э
 
 ## 9. Обновление счётчиков (что изменилось против прежней инвентаризации)
 
-| Показатель | Было | Стало |
+| Показатель | Было (2026-08) | Стало (2026-08-17) |
 |---|---|---|
-| Всего .md-файлов | 63 | **64** |
+| Всего .md-файлов | 64 | **63** |
 | docs/ | 30 | 30 (README + 24 спецификации + 3 ревью + 2 архитектурных) |
 | greenmarket/GreenMarket/docs/ | 25 | 25 (design-system 10 + ux 14 + architecture 1) |
-| Корень репозитория (.md) | 1 (README) | 2 (README + AI-first_Engineering_Process.md) |
+| Корень репозитория (.md) | 2 (README + AI-first_Engineering_Process.md) | **1** (только README; AI-first_Engineering_Process.md удалён) |
 | react-vite-bootstrap-project/README.md | 1 | 1 |
 | tests_folder/ | 2 | 2 |
 | _inventory/ | 4 | 4 |
-| Всего файлов (без node_modules) | 281 | **290** |
+| Всего файлов (без node_modules) | 290 | **349** |
 
-Основные изменения: (1) `AI-first Engineering Process.docx` удалён, документ процесса переведён в `AI-first_Engineering_Process.md` (+1 .md); (2) добавлен `full_changes.diff` (+1 файл); (3) домен Map расширен (filters/SellerFilters.ts + 3 автотеста, +4 .ts); (4) экраны: `MapLocationButton.tsx` → `MapFabButton.tsx`, добавлены `SellerListScreenView.tsx` и `SellerFilter.tsx` (+2 .tsx, +1 .css). Суммарный итог 281 → 290.
+Основные изменения 2026-08-17: (1) добавлен экран карточки продавца `screens/seller-card/` (9 файлов); (2) домен Map расширен с 16 до 54 файлов; (3) добавлены утилиты formatting/SellerStatus.ts, formatting/DurationFormatter.ts, formatting/InitialsFormatter.ts, utils/clipboard.ts; (4) добавлены компоненты app/MapSurface.tsx, app/useMapFullscreen.ts, app/useIsMobile.ts, app/routeMapping.ts, screens/map/MapSearchAutocomplete.tsx; (5) расширены diagnostics/ (5 новых файлов); (6) добавлен plugins/localTelemetry.ts; (7) добавлен navigation-runtime-layer/runtime/GreenMarketActionHandlers.ts + тест; (8) удалены full_changes.diff, archive/, AI-first_Engineering_Process.md; (9) добавлены лог-файлы (build2.log, ssh-tunnel.log и др.).

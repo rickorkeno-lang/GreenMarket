@@ -2,6 +2,8 @@
 
 Сведение всех номеров ТЗ/GM-DOM/GM-UX/IMP-003/AR-003, встречающихся в коде (grep -rn по `greenmarket/`, `navigation-runtime-layer/` и `react-vite-bootstrap-project/src/`), с проверкой — есть ли соответствующий файл в docs/specifications/, docs/architecture/ или greenmarket/GreenMarket/docs/. Каждая строка проверена вручную (не по описанию README, а по фактическому наличию файла).
 
+Обновлено 2026-08-17: добавлены ссылки из нового экрана карточки продавца и расширенного домена Map.
+
 ## Легенда статуса
 - ✅ Есть — файл существует, ссылка проверяема.
 - ❌ Отсутствует — номер упоминается в коде с конкретным разделом (§N), но файла с таким именем нет нигде в архиве.
@@ -33,7 +35,7 @@
 | GM-DOM-007 | Action Model | нет файла | только в GM-UX-*.md | ❌ (аналогично) |
 | GM-DOM-008 | Screen Contract | нет файла | только в GM-UX-*.md | ❌ (аналогично) |
 | GM-UX-001…013 | UX-артефакты экранов Stage 1 | greenmarket/GreenMarket/docs/ux/stage-1/*.md (все 13 присутствуют) | ссылаются друг на друга и на GM-DOM-*; напрямую в .ts-коде не упоминаются | ✅ |
-| IMP-003.1 / IMP-003.1.1 / IMP-003.1.2 | Экран Map: архитектура, GeoService, MapRuntime | нет файла | Только `react-vite-bootstrap-project/src/platform-core/map/*` (16 файлов: MapRuntime, LeafletAdapter, MapViewModel, SellerRepository, MockSellerRepository, GeoService, MapSheetAdapter, MapAdapterTypes, MapConfig, TileProvider, MapAdapter + тесты), `screens/MapScreen.ts`, `screens/SellerCatalogScreen.ts`, `screens/map/MapScreenView.tsx`, `diagnostics/Diagnostics.ts`, `contracts/Action.ts`, `app/App.tsx`, `app/NavigationContainer.tsx` | ❌ (цитируется с разделами §2–§15; файлов нет) |
+| IMP-003.1 / IMP-003.1.1 / IMP-003.1.2 | Экран Map: архитектура, GeoService, MapRuntime | нет файла | `react-vite-bootstrap-project/src/platform-core/map/*` (54 файла, включая gis/, repository/, routing/, runtime/, persistence/, history/, product-search/, recommendations/, adapters/, builders/, filters/, viewmodels/ + тесты), `screens/MapScreen.ts`, `screens/SellerCatalogScreen.ts`, `screens/map/MapScreenView.tsx`, `screens/map/MapSearchAutocomplete.tsx`, `diagnostics/Diagnostics.ts`, `contracts/Action.ts`, `app/App.tsx`, `app/NavigationContainer.tsx`, `app/MapSurface.tsx` | ❌ (цитируется с разделами §2–§15; файлов нет) |
 | AR-003 | Диаграмма навигации Customer UI (Map ↔ Catalog ↔ Seller List) | нет файла | `screens/MapScreen.ts`, `screens/SellerListScreen.ts`, `screens/seller-list/SellerListScreenView.tsx`, `screens/map/MapScreenView.tsx`, `map/*`, `navigation-runtime-layer/*/NavigationStack.ts`, `contracts/Action.ts`, `runtime/GreenMarketRuntime.ts`, `app/NavigationContainer.tsx` | ❌ (цитируется как существующий) |
 
 ## Прочитанное как единый вывод
@@ -44,7 +46,15 @@
 
 3. Новая находка при обновлении инвентаризации: **экран Map** реализован в `react-vite-bootstrap-project/src/platform-core/map/` (16 файлов) и ссылается на серию **IMP-003.1 / IMP-003.1.1 / IMP-003.1.2 / AR-003** с постатейными ссылками (§2–§15). Этих документов в репозитории нет — при этом GM-010 (единственный архитектурный документ про Map) их не упоминает. Тот же IMP-003.1 цитируется в `diagnostics/Diagnostics.ts`, `contracts/Action.ts`, `screens/MapScreen.ts`, `screens/MapScreenView.tsx` и `app/NavigationContainer.tsx`. AR-003 дополнительно цитируется в `screens/seller-list/SellerListScreenView.tsx`.
 
-4. Практический вывод: если восстанавливать недостающие документы, разумный порядок — сначала ТЗ-036 (Каталог, 5 упоминаний, влияет и на Action Catalog) и GM-DOM-001 (Domain Model, 15 упоминаний — самый цитируемый отсутствующий документ в репозитории), затем ТЗ-037/038/035/027 и GM-DOM-002/003 по убыванию числа ссылок. После них — серия IMP-003.1/AR-003 (нужна для верификации экрана Map).
+4. Практический вывод: если восстанавливать недостающие документы, разумный порядок — сначала ТЗ-036 (Каталог, 5 упоминаний, влияет и на Action Catalog) и GM-DOM-001 (Domain Model, 15 упоминаний — самый цитируемый отсутствующий документ в репозитории), затем ТЗ-037/038/035/027 и GM-DOM-002/003 по убыванию числа ссылок. После них — серия IMP-003.1/AR-003 (нужна для верификации экрана Map, который теперь составляет 54 файла кода — самый большой домен в проекте).
+
+## Находки 2026-08-17: экран карточки продавца и расширенный домен Map
+
+5. **Экран карточки продавца** реализован в `react-vite-bootstrap-project/src/screens/seller-card/` (9 файлов: SellerCardScreenView.tsx, SellerCardHeader.tsx, SellerCardActions.tsx, SellerCardProducts.tsx, SellerCardRecommendations.tsx, SellerCardReports.tsx, SellerCardReportDialog.tsx, useSellerCardController.ts, seller-card.css). Ссылается на ТЗ-025 v1.1 (✅) и ТЗ-027 §5 (❌ — файла нет).
+
+6. **Домен Map расширился с 16 до 54 файлов**: добавлены подмодули routing/ (RouteService, OsrmHttpProvider, PolylineCodec + 3 теста), persistence/ (MapSessionStore, OfflineCacheStore, SellerHistoryStore + тесты), history/ (SellerHistory + тесты), product-search/ (ProductSearch + тесты), recommendations/ (SellerRecommendations + тесты), gis/ (TileFallback, MarkerStyle + тесты), repository/ (6 новых файлов + тесты), runtime/MapProjection.ts + тест. Все новые файлы ссылаются на IMP-003.1 (§3–§14), подтверждая серию как полное описание архитектуры экрана Map.
+
+7. **Добавлены новые утилиты и компоненты**: formatting/SellerStatus.ts, formatting/DurationFormatter.ts, formatting/InitialsFormatter.ts, utils/clipboard.ts, app/MapSurface.tsx, app/useMapFullscreen.ts, app/useIsMobile.ts, app/routeMapping.ts, screens/map/MapSearchAutocomplete.tsx, diagnostics/ (5 новых файлов), navigation-runtime-layer/runtime/GreenMarketActionHandlers.ts.
 
 ## Не подтвердившиеся/скорректированные утверждения предыдущей инвентаризации
 
@@ -52,7 +62,7 @@
 |---|---|
 | «README фиксирует ТЗ-001…029» | Неточно. Таблица README — это 29 *ссылок источника* (хронологических), а не диапазон номеров ТЗ. Реальные номера ТЗ в этой таблице: 001–003, 005–011, 013–026 (24 уникальных, макс. — ТЗ-026). Формулировка была исправлена в DOCUMENT_INDEX.md. |
 | «29 документов ТЗ» | Из 29 строк таблицы 4 — не ТЗ-документы (мета-ревью, промпт, рецензия, ответ на вопросы), а 2 строки — это два файла одного и того же ТЗ-025 (v1.0/v1.1). Строгое число самостоятельных ТЗ-документов — 23 файла. |
-| «123 файла» | Подтверждено: find . -type f без node_modules/.git = 123. Внутрь archive/*.zip (31 файл) счётчик не заходит — это отдельный, единый файл в подсчёте. Уточнение внесено в FILE_TREE.md. **Актуализировано при обновлении: теперь 281 файл** — добавлены react-vite-bootstrap-project/ (148 без node_modules), tests_folder/ (2), корневые служебные файлы. |
+| «123 файла» | Подтверждено: find . -type f без node_modules/.git = 123. **Актуализировано при обновлении 2026-08-17: теперь 349 файлов** — добавлены react-vite-bootstrap-project/, tests_folder/, корневые служебные файлы; удалены archive/ и full_changes.diff; добавлены экран карточки продавца (9 файлов), расширен домен Map (54 файла), утилиты, diagnostics, plugins, лог-файлы. |
 | «Код ссылается на ТЗ-027, ТЗ-035…038» | Подтверждено и расширено — плюс найдена ранее не замеченная серия GM-DOM-001…008. **При обновлении добавлена серия IMP-003.1/IMP-003.1.1/IMP-003.1.2/AR-003** (экран Map), цитируемая только в react-vite-bootstrap-project/src/platform-core/map/. |
-| «Код — только greenmarket/ + navigation-runtime-layer» | Неточно: есть вторая копия кода в react-vite-bootstrap-project/src/platform-core/ (79 файлов). Часть файлов идентична, часть разошлась. Полное описание — в CODE_INDEX.md. |
+| «Код — только greenmarket/ + navigation-runtime-layer» | Неточно: есть вторая копия кода в react-vite-bootstrap-project/src/platform-core/ (~200 файлов). Часть файлов идентична, часть разошлась. Домен Map существует только здесь. Полное описание — в CODE_INDEX.md. |
 | «Код ссылается на ТЗ-025 v1.1» | Верно. Дополнительно: в react-vite/src/platform-core/ те же ссылки на ТЗ-025 v1.1 (копия того же файла). |

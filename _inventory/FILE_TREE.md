@@ -1,18 +1,16 @@
 # FILE_TREE.md
 
-Полное дерево репозитория GreenMarket_CustomerUI-main по состоянию на обновление документации (2026-08).
+Полное дерево репозитория GreenMarket_CustomerUI-main по состоянию на обновление документации (2026-08-17).
 
-Метод получения: обход дерева без исключений, кроме `node_modules/` (папка `react-vite-bootstrap-project/node_modules`, 6222 файла, в подсчёт и дерево не входит) и `dist/` (см. примечание ниже — сборка считается одним блоком, её содержимое не расшифровывается). История счётчиков против предыдущей инвентаризации — в конце документа.
+Метод получения: обход дерева через Glob-инструмент без исключений, кроме `node_modules/`. Сборка `dist/` отсутствует (не коммитится). История счётчиков против предыдущей инвентаризации — в конце документа.
 
-Итоговый счётчик: **290 файлов** (без `node_modules`; включая `dist/`). Без `dist/` — 286 файлов. Внутри вложенного архива `archive/*.zip` (31 файл) — отдельный снимок, считается одним файлом; его содержимое описано в `DOCUMENT_INDEX.md` → «Архивный снимок».
+Итоговый счётчик: **349 файлов** (без `node_modules`).
 
-Распределение по типам файлов (без `node_modules`): `.ts` — 142, `.md` — 64, `.tsx` — 51, `.css` — 9, `.json` — 5, `.log` — 3, `.html` — 2, `.gitignore` — 2, `.jsx` — 2, по 1 файлу: `.diff`, `.prettierrc`, `.js`, `.map`, `.zip`, `.bat`, `.txt`, `.cjs`, `.example`, `.editorconfig`.
+Распределение по типам файлов: `.ts` — 199, `.md` — 63, `.tsx` — 53, `.css` — 9, `.log` — 7, `.json` — 5, `.html` — 1, `.bat` — 1, `.txt` — 1, `.jsx` — 2, `.cjs` — 1, `.example` — 1, `.editorconfig` — 1, `.prettierrc` — 1, `.gitignore` — 2.
 
 ```
 .
 ├── README.md
-├── AI-first_Engineering_Process.md
-├── full_changes.diff
 ├── docs/
 │   ├── README.md
 │   ├── architecture/
@@ -166,12 +164,15 @@
 │   ├── vite.config.ts / tsconfig.json / tsconfig.node.json
 │   ├── vercel.json
 │   ├── .editorconfig / .env.example / .eslintrc.cjs / .gitignore / .prettierrc
-│   ├── dist/                               (сборка: index.html + assets/, в подсчёте блоком)
-│   ├── vite-dev.log                        (создаётся при запуске dev-сервера)
-│   ├── node_modules/                       (6222 файла — не входят в подсчёт/дерево)
+│   ├── plugins/localTelemetry.ts         ← Vite-плагин: перехват POST /api/diagnostics, /api/reports
+│   ├── vite-dev.log / build2.log / ssh-tunnel.log / ssh-tunnel.err.log / cloudflared-tunnel.log
+│   ├── node_modules/                     (не входят в подсчёт/дерево)
 │   └── src/
 │       ├── main.tsx / vite-env.d.ts
-│       ├── app/                            App.tsx, ErrorBoundary.tsx, NavigationContainer.tsx, RuntimeRouteSync.tsx
+│       ├── app/                            App.tsx, ErrorBoundary.tsx, NavigationContainer.tsx,
+│       │                                   RuntimeRouteSync.tsx, MapSurface.tsx, routeMapping.ts,
+│       │                                   useIsMobile.ts, useMapFullscreen.ts
+│       │                                   + __tests__/RuntimeRouteSync.test.ts
 │       ├── buyer_mvp/                      Buyer MVP: api.ts, format.ts, types.ts, buyer_mvp.css,
 │       │                                   components/{CategoryTree,OfferCard,PhotoPlaceholder,PhotoStrip,ProductCard,SearchBar}.tsx,
 │       │                                   screens/{CatalogScreen,HomeScreen,ProductScreen}.tsx
@@ -181,36 +182,64 @@
 │       │                                   components/{Avatar,Button,ListItem,Loader,Overlays,States,Surface,Text,index}.tsx + components.css
 │       ├── layout/                         Flex.tsx, Structure.tsx, index.ts, layout.css
 │       ├── mocks/index.ts
-│       ├── platform-core/                  ← рабочая копия greenmarket/GreenMarket/ + домен Map + доп. файлы (79 .ts/.tsx)
-│       │   ├── adapters/SellerCardAdapter.ts
+│       ├── platform-core/                  ← рабочая копия greenmarket/GreenMarket/ + домен Map + доп. файлы
+│       │   ├── adapters/SellerCardAdapter.ts + __tests__/SellerCardAdapter.test.ts
 │       │   ├── basket/                     (BasketScreen.tsx, adapters/, builders/, viewmodels/)
 │       │   ├── BottomSheetDeclarative.tsx
 │       │   ├── builders/                   (PurchaseOptionsBuilder, ScreenBuilder, SellerCardBuilder)
 │       │   ├── catalog/                    (CatalogScreen.tsx, adapters/, builders/, viewmodels/)
 │       │   ├── contracts/                  Action.ts, BusinessEvent.ts, ContentBlock.ts, DomainTypes.ts, LoadState.ts, ViewState.ts
-│       │   ├── diagnostics/Diagnostics.ts
+│       │   ├── diagnostics/                ConversionFunnel.ts, Diagnostics.ts, LocalFileSink.ts,
+│       │   │                               LocalReportStore.ts, sanitizeTelemetry.ts, telemetrySession.ts
 │       │   ├── favorites/                  (FavoritesScreen.tsx, adapters/, builders/, viewmodels/)
-│       │   ├── formatting/                 (Distance, Price, Rating, Subtitle Formatter)
-│       │   ├── map/                        ← домен Map (нет в greenmarket/), 16 файлов:
-│       │   │   ├── adapters/               MapSheetAdapter.ts, __tests__/MapSheetAdapter.test.ts
+│       │   ├── formatting/                 DistanceFormatter, DurationFormatter, InitialsFormatter, PriceFormatter,
+│       │   │                               RatingFormatter, SellerStatus, SubtitleFormatter
+│       │   ├── map/                        ← домен Map (нет в greenmarket/), 54 файла:
+│       │   │   ├── adapters/               MapSheetAdapter.ts + __tests__/MapSheetAdapter.test.ts
 │       │   │   ├── builders/MapBuilder.ts
+│       │   │   ├── compare.ts
 │       │   │   ├── filters/SellerFilters.ts
-│       │   │   ├── gis/                    GeoService.ts, LeafletAdapter.tsx, MapAdapter.tsx, MapAdapterTypes.ts, MapConfig.ts, TileProvider.ts
-│       │   │   ├── repository/             SellerRepository.ts, MockSellerRepository.ts, __tests__/MockSellerRepository.test.ts
-│       │   │   ├── runtime/                MapRuntime.ts, __tests__/MapRuntime.test.ts
+│       │   │   ├── gis/                    GeoService.ts, LeafletAdapter.tsx, MapAdapter.tsx, MapAdapterTypes.ts,
+│       │   │   │                           MapConfig.ts, MarkerStyle.ts, TileFallback.ts, TileProvider.ts
+│       │   │   │                           + __tests__/MarkerStyle.test.ts, TileFallback.test.ts
+│       │   │   ├── history/SellerHistory.ts + __tests__/SellerHistory.test.ts
+│       │   │   ├── persistence/            MapSessionStore.ts, OfflineCacheStore.ts, SellerHistoryStore.ts
+│       │   │   │                           + __tests__/MapSessionStore.test.ts, OfflineCacheStore.test.ts, SellerHistoryStore.test.ts
+│       │   │   ├── product-search/         ProductSearch.ts + __tests__/ProductSearch.test.ts
+│       │   │   ├── recommendations/        SellerRecommendations.ts + __tests__/SellerRecommendations.test.ts
+│       │   │   ├── repository/             ApiLocationRepository.ts, ApiSellerRepository.ts, CachedLocationRepository.ts,
+│       │   │   │                           CachedSellerRepository.ts, LocationRepository.ts, locationIndex.ts,
+│       │   │   │                           mockSellerCatalog.ts, MockSellerRepository.ts, repository.ts,
+│       │   │   │                           SellerRepository.ts
+│       │   │   │                           + __tests__/MockSellerRepository.test.ts, CachedSellerRepository.test.ts,
+│       │   │   │                             ProductSearchRepository.test.ts
+│       │   │   ├── routing/                OsrmHttpProvider.ts, PolylineCodec.ts, RouteProvider.ts,
+│       │   │   │                           RouteService.ts, RouteServiceFactory.ts
+│       │   │   │                           + __tests__/PolylineCodec.test.ts, RouteService.test.ts
+│       │   │   ├── runtime/                MapProjection.ts, MapRuntime.ts
+│       │   │   │                           + __tests__/MapRuntime.test.ts, MapRuntimeMarkets.test.ts,
+│       │   │   │                             MapRuntimeRoute.test.ts, MapSessionRestore.test.ts
 │       │   │   └── viewmodels/MapViewModel.ts
-│       │   ├── navigation-runtime-layer/   (hooks/, navigation/, runtime/ + __tests__ — копия navigation-runtime-layer/)
-│       │   ├── presentation/               (DistanceVm, PriceVm, RatingVm, SubtitleParts)
+│       │   ├── navigation-runtime-layer/   hooks/useGreenMarketRuntime.ts,
+│       │   │                               navigation/NavigationStack.ts, ScreenRegistry.ts + __tests__/,
+│       │   │                               runtime/GreenMarketRuntime.ts, GreenMarketActionHandlers.ts + __tests__/
+│       │   ├── presentation/               DistanceVm, DurationVm, PriceVm, RatingVm, SubtitleParts
 │       │   ├── product_card/               (ProductCardScreen.tsx, adapters/, builders/, viewmodels/)
 │       │   ├── purchase_options/           (PurchaseOptionsScreen.tsx, adapters/, formatting/, presentation/, viewmodels/)
-│       │   ├── screens/                    Basket, Catalog, Favorites, Map, ProductCard, PurchaseOptions, ScreenDefinition,
-│       │   │                               Search, SellerCard, SellerCatalog, SellerList (.ts)
+│       │   ├── screens/                    Basket, Catalog, Favorites, MainScreen, ProductCard, PurchaseOptions,
+│       │   │                               ScreenDefinition, Search, SellerCard, SellerCatalog, SellerList (.ts)
 │       │   ├── search/                     (SearchScreen.tsx, adapters/, builders/, viewmodels/)
+│       │   ├── utils/clipboard.ts
 │       │   └── viewmodels/SellerCardViewModel.ts
 │       ├── repositories/index.ts
 │       ├── screens/                        PlaceholderScreen.tsx,
 │       │                                   filter/{SellerFilter.tsx, filter.css},
-│       │                                   map/{map.css, MapBottomSheetContent.tsx, MapFabButton.tsx, MapScreenView.tsx},
+│       │                                   map/{map.css, MapBottomSheetContent.tsx, MapFabButton.tsx,
+│       │                                      MapScreenView.tsx, MapSearchAutocomplete.tsx},
+│       │                                   seller-card/{SellerCardActions.tsx, SellerCardHeader.tsx,
+│       │                                      SellerCardProducts.tsx, SellerCardRecommendations.tsx,
+│       │                                      SellerCardReportDialog.tsx, SellerCardReports.tsx,
+│       │                                      SellerCardScreenView.tsx, useSellerCardController.ts, seller-card.css},
 │       │                                   seller-list/SellerListScreenView.tsx
 │       └── shared/global.css
 ├── tests_folder/
@@ -226,8 +255,6 @@
 │   ├── BottomSheetDeclarative_3.jsx
 │   ├── BottomSheetDeclarative_3.tsx.jsx
 │   └── types.ts.txt
-├── archive/
-│   └── GreenMarket_CustomerUI_v3_2026-07-08_2.zip   (31 файл внутри)
 ├── greenmarket-server.bat
 ├── vite-dev.log
 └── vite-dev-err.log
@@ -235,10 +262,15 @@
 
 ## Изменения против предыдущей редакции FILE_TREE.md
 
-1. **`AI-first Engineering Process.docx` → `AI-first_Engineering_Process.md`.** Документ процесса (AI-first Development Process MVP v1.0) переведён из `.docx` в Markdown. Теперь это корневой `.md`-файл, учитывается в счётчике документов.
-2. **Добавлен `full_changes.diff`** — сводный diff недавних доработок экрана Map (крупные правки `MapScreenView.tsx`, `LeafletAdapter.tsx`, `MapRuntime.ts`, `MapSheetAdapter.ts` и др.). Вспомогательный файл для ревью изменений, не часть документации.
-3. **Домен Map расширен с 12 до 16 файлов**: добавлены `filters/SellerFilters.ts` (конфигурируемый фильтр продавцов) и три теста (`MapSheetAdapter.test.ts`, `MockSellerRepository.test.ts`, `MapRuntime.test.ts` в `__tests__/`).
-4. **Экраны Map: `MapLocationButton.tsx` удалён**, вместо него — `MapFabButton.tsx` (общий FAB-компонент для панели кнопок карты). `MapScreenView.tsx` вырос с 302 до 585 строк.
-5. **Добавлен экран `SellerListScreenView.tsx`** (`src/screens/seller-list/`) — полная реализация списка продавцов (ранее был только `SellerListScreen.ts`-ScreenDefinition-заглушка в `platform-core/screens/`).
-6. **Добавлен экран-компонент фильтра `SellerFilter.tsx` + `filter.css`** (`src/screens/filter/`) — общий выпадающий фильтр для карты, списка продавцов и результатов поиска.
-7. **Счётчик 281 → 290.** Разница: +1 `.md` (перевод docx), +1 `.diff`, +4 `.ts` (фильтр + 3 теста), +1 `.tsx` (SellerListScreenView, с учётом удаления MapLocationButton и добавления MapFabButton/SellerFilter), +1 `.css` (filter.css), +1 `.gitignore` (в react-vite-bootstrap-project), −1 `.docx`.
+### Обновление 2026-08-17 (против версии 2026-08)
+
+1. **Добавлен экран карточки продавца** (`src/screens/seller-card/`, 9 файлов): SellerCardScreenView.tsx (главный компонент экрана), SellerCardHeader.tsx, SellerCardActions.tsx, SellerCardProducts.tsx, SellerCardRecommendations.tsx, SellerCardReports.tsx, SellerCardReportDialog.tsx (компоненты), useSellerCardController.ts (хук-контроллер), seller-card.css.
+2. **Домен Map расширен с 16 до 54 файлов**: добавлены routing/ (RouteService.ts, RouteServiceFactory.ts, RouteProvider.ts, OsrmHttpProvider.ts, PolylineCodec.ts + 2 теста), persistence/ (MapSessionStore.ts, OfflineCacheStore.ts, SellerHistoryStore.ts + 3 теста), history/ (SellerHistory.ts + тест), product-search/ (ProductSearch.ts + тест), recommendations/ (SellerRecommendations.ts + тест), gis/ (TileFallback.ts, MarkerStyle.ts + 2 теста), repository/ (ApiLocationRepository.ts, ApiSellerRepository.ts, CachedLocationRepository.ts, CachedSellerRepository.ts, LocationRepository.ts, locationIndex.ts, mockSellerCatalog.ts, repository.ts + 3 теста), runtime/ (MapProjection.ts + 3 теста: MapRuntimeMarkets, MapRuntimeRoute, MapSessionRestore), compare.ts.
+3. **Добавлены утилиты**: formatting/SellerStatus.ts, formatting/DurationFormatter.ts, formatting/InitialsFormatter.ts, utils/clipboard.ts.
+4. **Добавлены компоненты инфраструктуры**: app/MapSurface.tsx (полноэкранный контейнер карты), app/useMapFullscreen.ts (Fullscreen API), app/useIsMobile.ts (matchMedia), app/routeMapping.ts (чистый маппинг pathname ↔ NavigationEntry), screens/map/MapSearchAutocomplete.tsx (автодополнение поиска на карте).
+5. **Расширены diagnostics/**: добавлены ConversionFunnel.ts, LocalFileSink.ts, LocalReportStore.ts, sanitizeTelemetry.ts, telemetrySession.ts (ранее был только Diagnostics.ts).
+6. **Добавлен navigation-runtime-layer/runtime/GreenMarketActionHandlers.ts** + тест — реальные обработчики действий (START_ROUTE → ROUTE_STARTED).
+7. **Добавлен plugins/localTelemetry.ts** — Vite-плагин для перехвата POST-запросов /api/diagnostics и /api/reports.
+8. **Удалены**: full_changes.diff, archive/ (zip-снимок), AI-first_Engineering_Process.md.
+9. **Добавлены лог-файлы**: build2.log, ssh-tunnel.log, ssh-tunnel.err.log, cloudflared-tunnel.log (в react-vite-bootstrap-project/).
+10. **Счётчик 290 → 349.** Разница: +18 .ts (map domain expansion + utils + diagnostics), +2 .tsx (MapSurface, MapSearchAutocomplete), −1 .md (удалён AI-first_Engineering_Process.md), +4 .log (новые логи), −1 .diff, −1 .zip, +1 .editorconfig, +1 .prettierrc.
