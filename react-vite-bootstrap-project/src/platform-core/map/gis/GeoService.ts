@@ -1,10 +1,17 @@
 import type { GeoPoint, MapBounds } from "@/platform-core/map/viewmodels/MapViewModel";
+import { locationRepository } from "@/platform-core/map/repository/locationIndex";
+import type { UserPosition } from "@/platform-core/map/repository/LocationRepository";
 
 /** IMP-003.1 §5: единый GeoService. Экран Map не обращается напрямую ни к
  *  navigator.geolocation, ни к API Leaflet — только к этому модулю.
  *  Геокодирование — через Nominatim (см. NOMINATIM_BASE_URL); в Stage 1
  *  используется по необходимости (например, для будущей строки поиска
- *  адреса), сам экран Map Stage 1 её не требует напрямую. */
+ *  адреса), сам экран Map Stage 1 её не требует напрямую.
+ *
+ *  MAP-038 extension: интеграция с backend /location — позиция пользователя
+ *  синхронизируется с сервером при включённом трекинге (POST /location),
+ *  позиция другого пользователя (курьер/исполнитель) читается через
+ *  readUserLocation (GET /location). */
 
 const EARTH_RADIUS_METERS = 6_371_000;
 const NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org";
@@ -32,6 +39,12 @@ export type UserLocationResolution =
  *  обновляется на сайте (маркер пользователя, расстояния). */
 export const LOCATION_TRACKING_INTERVAL_MS = 3000;
 
+/** Интервал синхронизации позиции с бэкендом (POST /location).
+ *  Отдельный от локального трекинга: бэкенд-запрос — fire-and-forget,
+ *  не блокирует обновление маркера на карте. Каждые 10 секунд — компромисс
+ *  между свежестью данных на сервере и нагрузкой. */
+const BACKEND_SYNC_INTERVAL_MS = 10_000;
+
 /** Состояние периодического трекинга позиции (startTracking/stopTracking).
  *  Единственный таймер всего приложения, работающий с navigator.geolocation. */
 let locationTrackingTimer: number | null = null;
@@ -39,10 +52,24 @@ let locationTrackingListener: ((location: GeoPoint) => void) | null = null;
 let locationTrackingOnError: ((kind: "no-permission" | "unavailable") => void) | null = null;
 let locationTrackingGeneration = 0;
 
+/** Состояние синхронизации позиции с бэкендом (MAP-038 extension).
+ *  Отдельный таймер: POST /location — fire-and-forget, не влияет на
+ *  локальный трекинг (маркер обновляется мгновенно от navigator.geolocation). */
+let backendSyncTimer: number | null = null;
+let backendSyncGeneration = 0;
+let lastSyncedLocation: GeoPoint | null = null;
+
 function clearLocationTrackingTimer(): void {
   if (locationTrackingTimer !== null) {
     window.clearTimeout(locationTrackingTimer);
     locationTrackingTimer = null;
+  }
+}
+
+function clearBackendSyncTimer(): void {
+  if (backendSyncTimer !== null) {
+    window.clearTimeout(backendSyncTimer);
+    backendSyncTimer = null;
   }
 }
 
@@ -159,11 +186,98 @@ export const GeoService = {
     void tick();
   },
 
-  /** Останавливает периодическое отслеживание позиции (если оно шло). */
+  /** Останавливает периодическое отслеживание позиции (если оно шло).
+   *  Также останавливает синхронизацию с бэкендом. */
   stopTracking(): void {
     clearLocationTrackingTimer();
+    clearBackendSyncTimer();
     locationTrackingListener = null;
     locationTrackingOnError = null;
+    lastSyncedLocation = null;
+  },
+
+  /** Запускает синхронизацию позиции с бэкендом (MAP-038 extension).
+   *  Каждые BACKEND_SYNC_INTERVAL_MS отправляет последнюю известную позицию
+   *  на сервер через POST /location (fire-and-forget). Запросы не пересекаются
+   *  (предыдущий тик завершается до запуска следующего). Ошибки отправки
+   *  тихо пропускаются — локальный трекинг продолжает работать. */
+  startBackendSync(getCurrentLocation: () => GeoPoint | null): void {
+    this.stopBackendSync();
+    const generation = ++backendSyncGeneration;
+
+    const tick = async (): Promise<void> => {
+      if (generation !== backendSyncGeneration) return;
+
+      const location = getCurrentLocation();
+      if (location !== null) {
+        // Отправляем только если позиция изменилась ( экономим трафик).
+        const changed =
+          lastSyncedLocation === null ||
+          Math.abs(lastSyncedLocation.lat - location.lat) > 1e-6 ||
+          Math.abs(lastSyncedLocation.lng - location.lng) > 1e-6;
+
+        if (changed) {
+          lastSyncedLocation = location;
+          try {
+            await locationRepository.writeLocation({
+              latitude: location.lat,
+              longitude: location.lng,
+              mode: 'point',
+            });
+          } catch {
+            // Fire-and-forget: ошибка отправки не критична,
+            // трекинг продолжит при следующем тике.
+          }
+        }
+      }
+
+      if (generation !== backendSyncGeneration) return;
+      backendSyncTimer = window.setTimeout(tick, BACKEND_SYNC_INTERVAL_MS);
+    };
+
+    void tick();
+  },
+
+  /** Останавливает синхронизацию с бэкендом (без остановки локального
+   *  трекинга). */
+  stopBackendSync(): void {
+    clearBackendSyncTimer();
+    lastSyncedLocation = null;
+  },
+
+  /** Чтение позиции пользователя с бэкенда (MAP-038 extension).
+   *  Для отображения позиции курьера/исполнителя на карте активного заказа.
+   *  Использует CachedLocationRepository — offline fallback на последний
+   *  кэш. Возвращает null, если позиция не найдена или бэкенд недоступен
+   *  (без кэша). */
+  async readUserLocation(userId: string): Promise<GeoPoint | null> {
+    try {
+      const result = await locationRepository.readLocation({
+        userId,
+        point: true,
+        history: false,
+      });
+      if (result.point === null) return null;
+      return { lat: result.point.latitude, lng: result.point.longitude };
+    } catch {
+      return null;
+    }
+  },
+
+  /** Чтение позиции пользователя с бэкенда (с расширенной информацией).
+   *  Возвращает UserPosition с временем обновления — для проверки актуальности
+   *  (например, «позиция обновлена более минуты назад — показать предупреждение»). */
+  async readUserPosition(userId: string): Promise<UserPosition | null> {
+    try {
+      const result = await locationRepository.readLocation({
+        userId,
+        point: true,
+        history: false,
+      });
+      return result.point;
+    } catch {
+      return null;
+    }
   },
 
   /** Геокодирование адреса через Nominatim. Сетевой вызов — при недоступности
