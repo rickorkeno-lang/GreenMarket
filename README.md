@@ -1,4 +1,4 @@
-# v3_2026-07-08 — Customer UI GreenMarket (19 ссылок ТЗ + 1 мета-ревью + 1 промпт + 1 ТЗ по FSM Engine + 2 детальные спецификации)
+# v3_2026-08-17 — Customer UI GreenMarket (19 ссылок ТЗ + 1 мета-ревью + 1 промпт + 1 ТЗ по FSM Engine + 2 детальные спецификации)
 
 > ⚠️ 2026-07-08 (позже в тот же день): семь документов ТЗ-023…ТЗ-029, изначально полученные в этом же заходе, **вынесены отсюда** в [`../../../platform_core/`](../../../platform_core/README.md) — по указанию коллеги они не специфичны для GreenMarket, а являются методологией Platform Core (применимы к GreenMarket, Taxi, Postamat, Voice Assistant одинаково). Здесь остался только ТЗ-022 — он явно про подготовку именно GreenMarket к внедрению FSM Engine, а не про саму методологию.
 
@@ -8,6 +8,7 @@
 
 > Добавлено 2026-07-15 по итогам ревью структуры репозитория — файлы перенесены из корня в подпапки, сам этот README обновлён на актуальные пути.
 > Обновлено позже: в дерево добавлены фактически существующие в репозитории `react-vite-bootstrap-project/`, `tests_folder/`, `_inventory/` и вспомогательные файлы, которых в исходной редакции не было.
+> Обновлено 2026-08-17: добавлены реализованный экран карточки продавца (9 файлов в `src/screens/seller-card/`), расширен домен Map (с 16 до 54 файлов), добавлены новые утилиты и компоненты.
 
 ```
 /
@@ -27,18 +28,17 @@
 │   ├── src/platform-core/       — рабочая копия greenmarket/ + домен Map (IMP-003.1), фильтр продавцов и тесты
 │   ├── src/design-system/       — реализация Design System (токены, тема, компоненты)
 │   ├── src/containers/ src/layout/ src/app/ — инфраструктура приложения
-│   ├── src/screens/map/         — экран Map (MapScreenView, MapBottomSheetContent, MapFabButton)
+│   ├── src/screens/map/         — экран Map (MapScreenView, MapBottomSheetContent, MapFabButton, MapSearchAutocomplete)
 │   ├── src/screens/seller-list/ — экран «Список продавцов» (SellerListScreenView)
+│   ├── src/screens/seller-card/ — экран «Карточка продавца» (SellerCardScreenView, компоненты, контроллер)
 │   ├── src/screens/filter/      — общий выпадающий фильтр (SellerFilter)
 │   └── README.md                — README проекта (см. раздел о его статусе ниже)
 ├── navigation-runtime-layer/    — изолированный runtime-слой: стек навигации, ScreenRegistry, тесты (npx tsx)
 ├── tests_folder/                — методология и ТЗ на тестирование (TEST_COVERAGE.md, TZ_TESTING_BUYER_MVP.md)
 ├── _inventory/                  — инвентаризация репозитория (FILE_TREE, DOCUMENT_INDEX, CODE_INDEX, TRACEABILITY)
 ├── examples/                    — примеры кода (BottomSheetDeclarative_3.jsx/.tsx, types.ts)
-├── archive/                     — исторический zip-снимок архива (v3_2026-07-08_2.zip)
 ├── greenmarket-server.bat       — запуск/останов dev-сервера react-vite-bootstrap-project (порт 5173)
-├── AI-first_Engineering_Process.md — процессная документация (ранее .docx, конвертирован в Markdown)
-├── full_changes.diff            — сводный diff доработок экрана Map (для ревью)
+├── plugins/localTelemetry.ts    — Vite-плагин: перехват POST /api/diagnostics, /api/reports
 └── vite-dev.log / vite-dev-err.log — логи dev-сервера (создаются при запуске greenmarket-server.bat)
 ```
 
@@ -86,20 +86,20 @@
 
 > ⚠️ Номер ТЗ-025 переиспользован: рецензия (ссылка 25) резервировала его под будущую «Карту», но пришедший документ (ссылка 27) сам называет себя «ТЗ-025. Карточка продавца». Ещё один случай переиспользованной нумерации, см. раздел ниже — зафиксировано как есть, без исправления номера.
 
-## Фактическое состояние кода (сверено с репозиторием, 2026-08)
+## Фактическое состояние кода (сверено с репозиторием, 2026-08-17)
 
 Кодовая часть репозитория, в отличие от документации, **не является «черновиком»**: приложение Stage 1 собирается и запускается. Состояние по данным инвентаризации `_inventory/`:
 
 **Исполняемое приложение — `react-vite-bootstrap-project/`** (запуск: `greenmarket-server.bat start`, dev-сервер на `http://localhost:5173`). Состоит из:
 
 - **`src/buyer_mvp/`** — Buyer MVP Stage 1: экраны Главная / Каталог / Карточка товара, клиентский код REST Catalog API (`/catalog/groups`, `/catalog/products`, `/catalog/products/{id}`), контракт описан в `src/buyer_mvp/types.ts`. Именно эти экраны покрываются `tests_folder/TZ_TESTING_BUYER_MVP.md`.
-- **`src/platform-core/`** — рабочая копия `greenmarket/GreenMarket/` (домены basket, catalog, favorites, product_card, purchase_options, search, seller_card + contracts + navigation-runtime-layer) **плюс** реализованный экран **Map** (`src/platform-core/map/`, 16 файлов: MapRuntime, LeafletAdapter, MapSheetAdapter, MockSellerRepository, GeoService, SellerFilters и др.; ссылается на IMP-003.1 / IMP-003.1.1 / IMP-003.1.2 / AR-003 — этих документов в репозитории нет), `contracts/BusinessEvent.ts`, `diagnostics/Diagnostics.ts`, экраны `MapScreen.ts`, `SellerCatalogScreen.ts` (патч), `SellerListScreen.ts` (ScreenDefinition списка продавцов).
-- **`src/design-system/`, `src/containers/`, `src/layout/`, `src/app/`** — реализация Design System (токены `colors.ts`/`typography.ts`/`scales.ts`, компоненты, тема), контейнеры (BottomSheet, Modal, Overlay, Snackbar), layout-примитивы, App Shell (RuntimeProvider, ErrorBoundary, Router).
-- **`src/screens/`** — экраны приложения: Map (`MapScreenView.tsx`, 585 строк + `MapBottomSheetContent.tsx`, `MapFabButton.tsx`, `map.css`), Список продавцов (`SellerListScreenView.tsx`, 296 строк), общий выпадающий фильтр (`SellerFilter.tsx` + `filter.css`), `PlaceholderScreen.tsx`.
+- **`src/platform-core/`** — рабочая копия `greenmarket/GreenMarket/` (домены basket, catalog, favorites, product_card, purchase_options, search, seller_card + contracts + navigation-runtime-layer) **плюс** реализованный экран **Map** (`src/platform-core/map/`, 54 файлов: MapRuntime, LeafletAdapter, MapSheetAdapter, MockSellerRepository, GeoService, SellerFilters, MapViewModel, SellerRepository, RouteService, OsrmHttpProvider, PolylineCodec, TileProvider, TileFallback, MarkerStyle, MapConfig, MapAdapterTypes, ProductSearch, SellerHistory, MapSessionStore, OfflineCacheStore, SellerHistoryStore, SellerRecommendations, MapProjection и др.; ссылается на IMP-003.1 / IMP-003.1.1 / IMP-003.1.2 / AR-003 — этих документов в репозитории нет), `contracts/BusinessEvent.ts`, `diagnostics/` (Diagnostics, ConversionFunnel, LocalFileSink, LocalReportStore, sanitizeTelemetry, telemetrySession), `formatting/SellerStatus.ts`, `formatting/DurationFormatter.ts`, `formatting/InitialsFormatter.ts`, `utils/clipboard.ts`, `navigation-runtime-layer/runtime/GreenMarketActionHandlers.ts`, экраны `MainScreen.ts`, `SellerCatalogScreen.ts`, `SellerListScreen.ts` (ScreenDefinition списка продавцов).
+- **`src/design-system/`, `src/containers/`, `src/layout/`, `src/app/`** — реализация Design System (токены `colors.ts`/`typography.ts`/`scales.ts`, компоненты, тема), контейнеры (BottomSheet, Modal, Overlay, Snackbar), layout-примитивы, App Shell (RuntimeProvider, ErrorBoundary, Router, MapSurface, RuntimeRouteSync, routeMapping, useIsMobile, useMapFullscreen).
+- **`src/screens/`** — экраны приложения: Map (`MapScreenView.tsx` + `MapBottomSheetContent.tsx`, `MapFabButton.tsx`, `MapSearchAutocomplete.tsx`, `map.css`), Список продавцов (`SellerListScreenView.tsx`), **Карточка продавца** (`SellerCardScreenView.tsx` + 7 компонентов: SellerCardHeader, SellerCardActions, SellerCardProducts, SellerCardRecommendations, SellerCardReports, SellerCardReportDialog, useSellerCardController + `seller-card.css`), общий выпадающий фильтр (`SellerFilter.tsx` + `filter.css`), `PlaceholderScreen.tsx`.
 
 **Эталонная библиотека — `greenmarket/GreenMarket/`** (52 файла .ts/.tsx, 2518 строк): та же архитектура Screen → Builder → Adapter → ViewModel в 7 доменах, но **без** домена Map и без исполняемого приложения вокруг.
 
-**Runtime-слой — `navigation-runtime-layer/`**: стек навигации (`NavigationStack.ts`), `ScreenRegistry.ts`, `GreenMarketRuntime.ts` + 4 теста (запуск вручную `npx tsx`, без jest/vitest и без CI). Его рабочая копия в `react-vite-bootstrap-project/src/platform-core/navigation-runtime-layer/` содержит ещё 2 теста (88 + 38 строк). Помимо них в `src/platform-core/map/__tests__/` появились первые автотесты самого приложения: `MapRuntime.test.ts` (212 строк), `MapSheetAdapter.test.ts` (161), `MockSellerRepository.test.ts` (75) — запуск тем же способом (`npx tsx`), без тест-раннера.
+**Runtime-слой — `navigation-runtime-layer/`**: стек навигации (`NavigationStack.ts`), `ScreenRegistry.ts`, `GreenMarketRuntime.ts` + 4 теста (запуск вручную `npx tsx`, без jest/vitest и без CI). Его рабочая копия в `react-vite-bootstrap-project/src/platform-core/navigation-runtime-layer/` содержит ещё `GreenMarketActionHandlers.ts` + тест и дополнительные тесты. Помимо них в `src/platform-core/map/__tests__/` находятся автотесты самого приложения (node:assert, npx tsx) — запуск тем же способом, без тест-раннера.
 
 **Тестирование Buyer MVP**: `tests_folder/` содержит только документы (методология `TEST_COVERAGE.md` и ТЗ `TZ_TESTING_BUYER_MVP.md`), самих Playwright-сценариев в репозитории нет — тесты предстоит написать.
 

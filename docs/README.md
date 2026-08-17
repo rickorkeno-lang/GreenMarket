@@ -19,4 +19,4 @@
 - [`../greenmarket/GreenMarket/docs/`](../greenmarket/GreenMarket/docs/) — документация самого UI-модуля: Design System (DS-001, DS-002 + токены), UX-артефакты Stage 1 (GM-UX-001…013), архитектура (GM-010).
 - [`../tests_folder/`](../tests_folder/) — методология и ТЗ на тестирование: `TEST_COVERAGE.md`, `TZ_TESTING_BUYER_MVP.md` (не связаны с серией ТЗ в `specifications/`).
 - [`../_inventory/`](../_inventory/) — инвентаризация репозитория: `FILE_TREE.md`, `DOCUMENT_INDEX.md`, `CODE_INDEX.md`, `TRACEABILITY.md` (сверка кода с документацией).
-- [`../react-vite-bootstrap-project/README.md`](../react-vite-bootstrap-project/README.md) — README исполняемого приложения Stage 1.
+- [`../react-vite-bootstrap-project/README.md`](../react-vite-bootstrap-project/README.md) — README исполняемого приложения Stage 1 (Buyer MVP, Map, Список продавцов, Карточка продавца).
