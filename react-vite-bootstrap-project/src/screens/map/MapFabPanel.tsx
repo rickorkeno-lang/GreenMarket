@@ -1,9 +1,8 @@
-import { forwardRef, useCallback, useId, useImperativeHandle, useState, type ReactNode } from 'react';
+import { forwardRef, useImperativeHandle, type ReactNode } from 'react';
 import { useDraggablePanel } from './useDraggablePanel';
 import './map.css';
 
 const STORAGE_KEY = 'gm.fab-panel.position';
-const TOOLTIP_DELAY_MS = 400;
 
 const OBSTACLE_SELECTORS = [
   '.gm-header',
@@ -39,30 +38,11 @@ export const MapFabPanel = forwardRef<MapFabPanelHandle, MapFabPanelProps>(funct
     storageKey: STORAGE_KEY,
     obstacleSelectors: OBSTACLE_SELECTORS,
     anchor: 'bottom-right',
+    autoCollapseMs: 8_000,
     onReturnRequest,
   });
 
-  const tooltipId = useId();
-  const [tooltipVisible, setTooltipVisible] = useState(false);
-  const tooltipTimerRef = useState(() => ({ current: null as number | null }))[0];
-
   useImperativeHandle(ref, () => ({ resetPosition }), [resetPosition]);
-
-  const showTooltip = useCallback(() => {
-    if (tooltipTimerRef.current !== null) return;
-    tooltipTimerRef.current = window.setTimeout(
-      () => setTooltipVisible(true),
-      TOOLTIP_DELAY_MS,
-    );
-  }, [tooltipTimerRef]);
-
-  const hideTooltip = useCallback(() => {
-    if (tooltipTimerRef.current !== null) {
-      window.clearTimeout(tooltipTimerRef.current);
-      tooltipTimerRef.current = null;
-    }
-    setTooltipVisible(false);
-  }, [tooltipTimerRef]);
 
   const isDefaultPos = offset.x === 0 && offset.y === 0;
 
@@ -93,11 +73,6 @@ export const MapFabPanel = forwardRef<MapFabPanelHandle, MapFabPanelProps>(funct
           className="gm-map-fab-panel__toggle"
           onClick={() => setExpanded(prev => !prev)}
           aria-label={expanded ? 'Свернуть панель инструментов' : 'Открыть панель инструментов'}
-          aria-describedby={tooltipVisible ? tooltipId : undefined}
-          onMouseEnter={showTooltip}
-          onMouseLeave={hideTooltip}
-          onFocus={showTooltip}
-          onBlur={hideTooltip}
           data-testid="fab-panel-toggle"
         >
           {expanded ? (
@@ -106,11 +81,6 @@ export const MapFabPanel = forwardRef<MapFabPanelHandle, MapFabPanelProps>(funct
             <span className="gm-map-fab-panel__chevron gm-map-fab-panel__chevron--up" />
           )}
         </button>
-        {tooltipVisible && (
-          <span id={tooltipId} role="tooltip" className="gm-map-fab-panel__tooltip">
-            {expanded ? 'Свернуть панель' : 'Открыть панель'}
-          </span>
-        )}
 
         {expanded && children}
         <div
