@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const MAX_OBSTACLE_PASSES = 6;
 const DEFAULT_OFFSET = { x: 0, y: 0 };
@@ -43,6 +43,8 @@ export interface UseDraggablePanelOptions {
   /** 'bottom-right' = fab panel anchor, 'bottom-left' = legend anchor */
   anchor: 'bottom-left' | 'bottom-right';
   onReturnRequest?: (show: boolean) => void;
+  /** Автосворачивание через N мс неактивности (pointer-события сбрасывают таймер). */
+  autoCollapseMs?: number;
 }
 
 export interface UseDraggablePanelReturn {
@@ -62,6 +64,7 @@ export function useDraggablePanel({
   obstacleSelectors,
   anchor,
   onReturnRequest,
+  autoCollapseMs,
 }: UseDraggablePanelOptions): UseDraggablePanelReturn {
   const [expanded, setExpanded] = useState(false);
   const [offset, setOffset] = useState<{ x: number; y: number }>(
@@ -85,6 +88,48 @@ export function useDraggablePanel({
     savePosition(storageKey, DEFAULT_OFFSET);
     setOffset({ ...DEFAULT_OFFSET });
   }, [storageKey]);
+
+  // ── Auto-collapse: свернуть панель через autoCollapseMs неактивности ──
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearCollapseTimer = useCallback(() => {
+    if (collapseTimerRef.current !== null) {
+      clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    }
+  }, []);
+
+  const startCollapseTimer = useCallback(() => {
+    clearCollapseTimer();
+    if (!autoCollapseMs) return;
+    collapseTimerRef.current = setTimeout(() => {
+      collapseTimerRef.current = null;
+      setExpanded(false);
+    }, autoCollapseMs);
+  }, [autoCollapseMs, clearCollapseTimer]);
+
+  useEffect(() => {
+    if (expanded && autoCollapseMs) {
+      startCollapseTimer();
+    } else {
+      clearCollapseTimer();
+    }
+    return clearCollapseTimer;
+  }, [expanded, autoCollapseMs, startCollapseTimer, clearCollapseTimer]);
+
+  // Сброс таймера при любом pointer-событии на панели
+  useEffect(() => {
+    if (!expanded || !autoCollapseMs) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const reset = () => startCollapseTimer();
+    el.addEventListener('pointerdown', reset, { passive: true });
+    el.addEventListener('pointermove', reset, { passive: true });
+    return () => {
+      el.removeEventListener('pointerdown', reset);
+      el.removeEventListener('pointermove', reset);
+    };
+  }, [expanded, autoCollapseMs, startCollapseTimer]);
 
   /** Измеряет визуальные размеры: если внутри есть [data-measure], берём
    *  его offsetWidth/Height (не включает padding хитбокса), иначе — сам элемент. */

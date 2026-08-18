@@ -1,9 +1,8 @@
-import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useState } from 'react';
+import { forwardRef, useImperativeHandle } from 'react';
 import { useDraggablePanel } from './useDraggablePanel';
 import './map.css';
 
 const STORAGE_KEY = 'gm.legend.position';
-const TOOLTIP_DELAY_MS = 400;
 
 const OBSTACLE_SELECTORS = [
   '.gm-header',
@@ -39,36 +38,11 @@ export const MapLegend = forwardRef<MapLegendHandle, MapLegendProps>(function Ma
     storageKey: STORAGE_KEY,
     obstacleSelectors: OBSTACLE_SELECTORS,
     anchor: 'bottom-left',
+    autoCollapseMs: 12_000,
     onReturnRequest,
   });
 
-  const tooltipId = useId();
-  const [tooltipVisible, setTooltipVisible] = useState(false);
-  const tooltipTimerRef = useState(() => ({ current: null as number | null }))[0];
-
-  useEffect(() => {
-    return () => {
-      if (tooltipTimerRef.current !== null) window.clearTimeout(tooltipTimerRef.current);
-    };
-  }, [tooltipTimerRef]);
-
   useImperativeHandle(ref, () => ({ resetPosition }), [resetPosition]);
-
-  const showTooltip = useCallback(() => {
-    if (tooltipTimerRef.current !== null) return;
-    tooltipTimerRef.current = window.setTimeout(
-      () => setTooltipVisible(true),
-      TOOLTIP_DELAY_MS,
-    );
-  }, [tooltipTimerRef]);
-
-  const hideTooltip = useCallback(() => {
-    if (tooltipTimerRef.current !== null) {
-      window.clearTimeout(tooltipTimerRef.current);
-      tooltipTimerRef.current = null;
-    }
-    setTooltipVisible(false);
-  }, [tooltipTimerRef]);
 
   const isDefaultPos = offset.x === 0 && offset.y === 0;
 
@@ -100,20 +74,10 @@ export const MapLegend = forwardRef<MapLegendHandle, MapLegendProps>(function Ma
           className="gm-map-legend__toggle"
           onClick={() => setExpanded(true)}
           aria-label="Развернуть легенду"
-          aria-describedby={tooltipVisible ? tooltipId : undefined}
-          onMouseEnter={showTooltip}
-          onMouseLeave={hideTooltip}
-          onFocus={showTooltip}
-          onBlur={hideTooltip}
           data-testid="legend-toggle"
         >
           <span className="gm-map-legend__flag" aria-hidden="true">🏁</span>
         </button>
-      )}
-      {tooltipVisible && !expanded && (
-        <span id={tooltipId} role="tooltip" className="gm-map-legend__tooltip">
-          Легенда
-        </span>
       )}
 
       {expanded && (
