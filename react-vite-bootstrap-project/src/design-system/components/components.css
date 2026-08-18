@@ -411,6 +411,9 @@
   color: var(--color-text-primary);
   border: var(--border-width-hairline) solid var(--color-border-default);
 }
+[data-theme='dark'] .gm-snackbar .gm-text--on-brand {
+  color: var(--color-text-primary);
+}
 .gm-snackbar--error {
   background: rgba(0, 0, 0, 0.6);
   color: var(--color-text-on-brand);
