@@ -29,6 +29,29 @@
 
 .gm-map-surface:fullscreen {
   background: var(--color-surface-base);
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Шапка карты в фуллскрине: absolute поверх safe-area, перекрывает «чёрную
+ * полоску» notch / Dynamic Island. Высота = 56 px (контент) + safe-area;
+ * padding-top внутри_header сдвигает лого/кнопки под safe-area. */
+.gm-map-surface:fullscreen .gm-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--z-sticky-header);
+  height: calc(56px + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* .gm-map-screen: height:auto + flex:1 вместо 100dvh, чтобы влезть в
+ * оставшееся пространство поверхности (100dvh − safe-area). Padding-top
+ * 56 px компенсируетabsolute-шапку, вышедшую из flex-потока. */
+.gm-map-surface:fullscreen .gm-map-screen {
+  height: auto;
+  flex: 1;
+  padding-top: 56px;
 }
 
 /* ---------- Фиксация карты на мобильных (не скроллится) ----------
@@ -65,10 +88,10 @@
 }
 
 /* Оверлеи поверх карты не должны ни панорамировать карту, ни скроллить
- * страницу жестом, начатым на них: touch-action: none отдаёт весь жест самому
- * элементу, а не браузеру/карте (легенда — крупный статичный оверлей). */
-.gm-map-bottom-left,
-.gm-map-fab-panel {
+ * страницу жестом, начатый на них: touch-action: none отдаёт весь жест самому
+ * элементу, а не браузеру/карте. */
+.gm-map-fab-panel,
+.gm-map-legend {
   touch-action: none;
 }
 
@@ -167,12 +190,28 @@
  * (gap + padding = --space-sm). z-index 11 — ВЫШЕ нижнего левого угла
  * (легенда/«Убрать маршрут», z-index 10): панель создаёт свой stacking-контекст,
  * поэтому тултипы кнопок (z-index --z-tooltip внутри панели) в итоге лежат
- * НАД легендой, а не под ней. Ниже клавиатурных подсказок (z-index 20). */
+ * НАД легендой, а не под ней. Ниже клавиатурных подсказок (z-index 20).
+ * Динамические границы: вычисляются в onDragStart (getLegendBounds) по
+ * реальному bbox легенды — без хардкода, корректно при будущем draggable-
+ * позиционировании легенды. */
+/* Внешний контейнер: position + padding для хитбокса (48px во все стороны).
+ * Сам НЕ рисует фон — визуал на __body. */
 .gm-map-fab-panel {
   position: absolute;
   right: var(--space-lg);
   bottom: var(--space-xxl);
   z-index: 11;
+  padding: 8px;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+  transition: transform 16ms linear;
+}
+
+/* Визуальная обёртка: фон, рамка, скругление — только здесь.
+ * position: relative — якорь для handle и tooltip. */
+.gm-map-fab-panel__body {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
@@ -181,6 +220,127 @@
   background: var(--color-surface-raised);
   border: var(--border-width-hairline) solid var(--color-border-default);
   box-shadow: var(--elevation-3);
+}
+
+/* Раскрытое состояние: относительный fallback для порядка кнопок */
+.gm-map-fab-panel--expanded {
+  position: absolute;
+}
+
+/* ---------- Кнопка сворачивания/разворачивания ---------- */
+.gm-map-fab-panel__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--duration-fast, 200ms) var(--easing-standard);
+}
+.gm-map-fab-panel__toggle:hover {
+  background: var(--color-hover-overlay);
+}
+.gm-map-fab-panel__toggle:focus-visible {
+  outline: 2px solid var(--color-brand-primary-strong);
+  outline-offset: 2px;
+}
+
+/* Стрелка вниз (свёрнутое состояние — «нажмите, чтобы развернуть») */
+.gm-map-fab-panel__chevron {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid var(--color-text-primary);
+  border-bottom: 2px solid var(--color-text-primary);
+  transform: rotate(45deg);
+  margin-top: -2px;
+}
+
+/* Стрелка вверх (развёрнутое состояние — «нажмите, чтобы свернуть») */
+.gm-map-fab-panel__chevron--up {
+  margin-top: 0;
+  margin-bottom: 2px;
+  transform: rotate(-135deg);
+}
+
+/* Подсказка кнопки сворачивания/разворачивания */
+.gm-map-fab-panel__tooltip {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + var(--space-sm));
+  transform: translateY(-50%);
+  z-index: var(--z-tooltip);
+  white-space: nowrap;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-text-primary);
+  color: var(--color-surface-base);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--elevation-3);
+  animation: gm-map-fab-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
+}
+
+[data-theme='dark'] .gm-map-fab-panel__tooltip {
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+}
+
+/* ---------- Индикатор перетаскивания: тёмно-серая жирная обводка в правом нижнем углу ----------
+ * L-образная скобка (две стороны прямоугольника) в правом нижнем углу панели.
+ * Видна всегда (subtle), после окончания drag — анимация утолщения → истончения
+ * (border-width 5px → 2px) за HANDLE_FADE_MS (2.5 с). */
+.gm-map-fab-panel__handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+}
+.gm-map-fab-panel__handle::before {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 14px;
+  height: 14px;
+  border-right: 2px solid var(--color-text-secondary);
+  border-bottom: 2px solid var(--color-text-secondary);
+  /* Радиус совпадает с углом панели (--radius-lg = 16px), чтобы
+   * скобка не вылезала за закруглённый край. */
+  border-radius: 0 0 var(--radius-lg) 0;
+  opacity: 0.35;
+  transition: opacity var(--duration-slow, 480ms) var(--easing-decelerate);
+}
+
+.gm-map-fab-panel--dragging {
+  cursor: grabbing;
+}
+
+.gm-map-fab-panel--dragging .gm-map-fab-panel__handle::before {
+  animation: gm-map-handle-fade var(--duration-slow, 480ms) var(--easing-decelerate) forwards;
+}
+
+@keyframes gm-map-handle-fade {
+  0% {
+    border-right-width: 5px;
+    border-bottom-width: 5px;
+    opacity: 0.9;
+  }
+  100% {
+    border-right-width: 2px;
+    border-bottom-width: 2px;
+    opacity: 0.35;
+  }
 }
 
 .gm-map-fab {
@@ -206,13 +366,10 @@
   animation: gm-map-fab-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
 }
 
-/* ---------- Нижний левый угол: «Убрать маршрут» + легенда статусов ----------
- * Оба элемента в одном flex-контейнере (column), поэтому кнопка ВСЕГДА выше
- * легенды, когда маршрут построен или строится (gap + padding = --space-sm);
- * без маршрута остаётся только легенда. align-items по умолчанию (stretch):
- * кнопка и легенда растягиваются до ОДНОЙ ширины (по самому широкому элементу),
- * поэтому легенда выровнена по кнопке «Убрать маршрут». Зеркально панели FAB
- * справа. */
+/* ---------- Нижний левый угол: кнопка «Убрать маршрут» (MAP-020) ----------
+ * Кнопка позиционируется абсолютно в левом нижнем углу. Легенда статусов
+ * теперь отдельный перемещаемый элемент (.gm-map-legend), поэтому
+ * .gm-map-bottom-left содержит только кнопку маршрута. */
 .gm-map-bottom-left {
   position: absolute;
   left: var(--space-lg);
@@ -260,23 +417,42 @@
   line-height: 1;
 }
 
-/* Легенда статусов маркеров (левый нижний угол, под кнопкой маршрута).
- * Три строки «квадрат + подпись» без заголовка: зелёный — открыто, красный —
- * закрыто, серый — неизвестно. Крупнее кнопки (шрифт md, квадраты 16px), та же
- * белая поверхность; ширина = ширине кнопки «Убрать маршрут» (stretch общего
- * контейнера). */
+/* Легенда статусов маркеров: плавающий элемент (левый нижний угол), сворачиваемый
+ * и перемещаемый (как панель FAB справа). padding — зона захвата drag (~48px
+ * со всех сторон, симметричная). Визуальное оформление — на __body внутри. */
 .gm-map-legend {
+  position: absolute;
+  left: var(--space-lg);
+  bottom: var(--space-xxl);
+  z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-  border: var(--border-width-hairline) solid var(--color-border-default);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface-raised);
-  box-shadow: var(--elevation-3);
+  padding: 8px;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
   color: var(--color-text-primary);
   font-family: var(--font-family-body);
   font-size: var(--font-size-md);
+  transition: transform 16ms linear;
+}
+
+/* Визуальная обёртка: фон, рамка, скругление — только здесь.
+ * position: relative — якорь для handle и tooltip. */
+.gm-map-legend__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+  box-shadow: var(--elevation-3);
+}
+
+.gm-map-legend--dragging {
+  cursor: grabbing;
 }
 
 .gm-map-legend__item {
@@ -303,6 +479,133 @@
 
 .gm-map-legend__swatch--unknown {
   background: var(--color-disabled-content);
+}
+
+/* ---------- Кнопка сворачивания/разворачивания легенды ---------- */
+.gm-map-legend__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  align-self: flex-end;
+  transition: background var(--duration-fast, 200ms) var(--easing-standard);
+}
+.gm-map-legend__toggle:hover {
+  background: var(--color-hover-overlay);
+}
+.gm-map-legend__toggle:focus-visible {
+  outline: 2px solid var(--color-brand-primary-strong);
+  outline-offset: 2px;
+}
+
+/* ---------- Флажок (свёрнутое состояние — «нажмите, чтобы развернуть») ---------- */
+.gm-map-legend__flag {
+  display: block;
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* ---------- Текст «свернуть» (развёрнутое состояние) ---------- */
+.gm-map-legend__collapse-btn {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-xs) 0 0;
+  border: none;
+  border-top: var(--border-width-hairline) solid var(--color-border-default);
+  margin-top: var(--space-xs);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--duration-fast, 200ms) var(--easing-standard);
+}
+.gm-map-legend__collapse-btn:hover {
+  color: var(--color-text-primary);
+}
+.gm-map-legend__collapse-btn:focus-visible {
+  outline: 2px solid var(--color-brand-primary-strong);
+  outline-offset: 2px;
+}
+
+/* Подсказка кнопки сворачивания/разворачивания легенды */
+.gm-map-legend__tooltip {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + var(--space-sm));
+  transform: translateY(-50%);
+  z-index: var(--z-tooltip);
+  white-space: nowrap;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-text-primary);
+  color: var(--color-surface-base);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--elevation-3);
+  animation: gm-map-fab-in var(--gm-duration-normal, var(--duration-normal)) var(--easing-decelerate);
+}
+
+[data-theme='dark'] .gm-map-legend__tooltip {
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  border: var(--border-width-hairline) solid var(--color-border-default);
+}
+
+/* ---------- Индикатор перетаскивания легенды: L-образная скоба в левом нижнем углу ---------- */
+.gm-map-legend__handle {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+}
+.gm-map-legend__handle::before {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-left: 2px solid var(--color-text-secondary);
+  border-bottom: 2px solid var(--color-text-secondary);
+  border-radius: 0 0 0 var(--radius-lg);
+  opacity: 0.35;
+  transition: opacity var(--duration-slow, 480ms) var(--easing-decelerate);
+}
+
+.gm-map-legend--dragging {
+  cursor: grabbing;
+}
+
+.gm-map-legend--dragging .gm-map-legend__handle::before {
+  animation: gm-map-legend-handle-fade var(--duration-slow, 480ms) var(--easing-decelerate) forwards;
+}
+
+@keyframes gm-map-legend-handle-fade {
+  0% {
+    border-left-width: 5px;
+    border-bottom-width: 5px;
+    opacity: 0.9;
+  }
+  100% {
+    border-left-width: 2px;
+    border-bottom-width: 2px;
+    opacity: 0.35;
+  }
 }
 
 /* ---------- Клавиатурная навигация: подсказки (пока зажата «?») ----------
@@ -1220,5 +1523,37 @@
   line-height: 1.2;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.3);
   pointer-events: none;
+}
+
+/* ---------- Атрибуция тайлов — в самом низу по центру ----------
+ * Leaflet-атрибуция (attributionControl) отключена; текст рендерится
+ * отдельным элементом внизу страницы, чтобы не засорять карту. */
+.gm-map-attribution {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--color-surface-raised);
+  border-top: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  pointer-events: auto;
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.gm-map-attribution a {
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color var(--gm-duration-fast);
+}
+
+.gm-map-attribution a:hover {
+  text-decoration-color: currentColor;
 }
 

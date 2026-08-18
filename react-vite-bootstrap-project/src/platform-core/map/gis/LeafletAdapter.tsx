@@ -713,7 +713,7 @@ export function LeafletAdapter({
         keyboard={false}
         style={{ width: "100%", height: "100%" }}
         zoomControl={false}
-        attributionControl={true}
+        attributionControl={false}
       >
         <TileLayer
           key={activeTileConfig.urlTemplate} // key нужен, чтобы слой перерисовался при смене URL
