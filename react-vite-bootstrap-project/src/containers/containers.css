@@ -76,7 +76,12 @@
   bottom: var(--space-xl);
   transform: translateX(-50%);
   z-index: var(--z-snackbar);
-  animation: gm-slide-up var(--duration-normal) var(--easing-decelerate);
+  animation: gm-snackbar-slide-up var(--duration-normal) var(--easing-decelerate);
+}
+
+@keyframes gm-snackbar-slide-up {
+  from { transform: translateX(-50%) translateY(100%); }
+  to   { transform: translateX(-50%) translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
