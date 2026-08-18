@@ -6,6 +6,7 @@ import { fetchProducts, fetchGroups, CatalogApiError } from '../api';
 import { SearchBar } from '../components/SearchBar';
 import { ProductCard } from '../components/ProductCard';
 import type { ProductGroup, ProductListItem, SortOrder } from '../types';
+import { OpenStreetMapTileProvider } from '@/platform-core/map/gis/TileProvider';
 
 type LoadState =
   | { status: 'loading' }
@@ -144,6 +145,19 @@ export function CatalogScreen() {
           </Row>
         </>
       )}
+
+      <div
+        style={{
+          marginTop: 'auto',
+          paddingTop: 'var(--space-lg)',
+          paddingBottom: '8px',
+          textAlign: 'center',
+          fontSize: 'var(--font-size-xs)',
+          color: 'var(--color-text-secondary)',
+          marginBottom: '-8px',
+        }}
+        dangerouslySetInnerHTML={{ __html: OpenStreetMapTileProvider.attribution }}
+      />
     </Stack>
   );
 }

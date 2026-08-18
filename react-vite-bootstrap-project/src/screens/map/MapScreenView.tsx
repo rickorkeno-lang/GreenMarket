@@ -26,6 +26,8 @@ import type {
 import type { ProductSellerMatch } from '@/platform-core/map/product-search/ProductSearch';
 import { MapBottomSheetContent } from '@/screens/map/MapBottomSheetContent';
 import { MapFabButton } from '@/screens/map/MapFabButton';
+import { MapFabPanel, type MapFabPanelHandle } from '@/screens/map/MapFabPanel';
+import { MapLegend, type MapLegendHandle } from '@/screens/map/MapLegend';
 import { MapSearchAutocomplete } from '@/screens/map/MapSearchAutocomplete';
 import { SellerFilter } from '@/screens/filter/SellerFilter';
 import { useTheme } from '@/design-system/useTheme';
@@ -39,6 +41,9 @@ const ZOOM_ON_SELLER = 15;
  *  синхронизирован с transition opacity .gm-map-key-hints в map.css
  *  (var(--gm-duration-normal) = 330 мс). */
 const KEYBOARD_HINTS_FADE_MS = 350;
+
+/** Длительность показа сообщения «Нажмите, чтобы вернуть» после drag панели (мс). */
+const FAB_RETURN_MESSAGE_MS = 3000;
 
 /** «Км → метры» для поля радиуса: запятая считается десятичной точкой;
  *  пустое/нечисловое/неположительное значение возвращает null (поиск не
@@ -166,6 +171,75 @@ export function MapScreenView({
   // «видим»): отменяется при скрытии/размонтировании, чтобы запланированный
   // кадр не «воскресил» подсказки после blur окна.
   const keyboardHintsRafRef = useRef<number | null>(null);
+
+  // Сообщение «Нажмите, чтобы вернуть» (Snackbar-стиль, дно экрана):
+  // showReturnMessage — видимость, fabPanelRef — сброс позиции по клику.
+  const [showReturnMessage, setShowReturnMessage] = useState(false);
+  const fabPanelRef = useRef<MapFabPanelHandle>(null);
+  const legendRef = useRef<MapLegendHandle>(null);
+  const returnMessageTimerRef = useRef<number | null>(null);
+  const [showLegendReturnMessage, setShowLegendReturnMessage] = useState(false);
+  const legendReturnTimerRef = useRef<number | null>(null);
+
+  const handleFabReturnRequest = useCallback((show: boolean) => {
+    if (returnMessageTimerRef.current !== null) {
+      window.clearTimeout(returnMessageTimerRef.current);
+      returnMessageTimerRef.current = null;
+    }
+    if (legendReturnTimerRef.current !== null) {
+      window.clearTimeout(legendReturnTimerRef.current);
+      legendReturnTimerRef.current = null;
+    }
+    if (show) {
+      setShowReturnMessage(true);
+      setShowLegendReturnMessage(false);
+      returnMessageTimerRef.current = window.setTimeout(() => {
+        setShowReturnMessage(false);
+        returnMessageTimerRef.current = null;
+      }, FAB_RETURN_MESSAGE_MS);
+    } else {
+      setShowReturnMessage(false);
+    }
+  }, []);
+
+  const handleFabReturnDismiss = useCallback(() => {
+    if (returnMessageTimerRef.current !== null) {
+      window.clearTimeout(returnMessageTimerRef.current);
+      returnMessageTimerRef.current = null;
+    }
+    setShowReturnMessage(false);
+    fabPanelRef.current?.resetPosition();
+  }, []);
+
+  const handleLegendReturnRequest = useCallback((show: boolean) => {
+    if (legendReturnTimerRef.current !== null) {
+      window.clearTimeout(legendReturnTimerRef.current);
+      legendReturnTimerRef.current = null;
+    }
+    if (returnMessageTimerRef.current !== null) {
+      window.clearTimeout(returnMessageTimerRef.current);
+      returnMessageTimerRef.current = null;
+    }
+    if (show) {
+      setShowLegendReturnMessage(true);
+      setShowReturnMessage(false);
+      legendReturnTimerRef.current = window.setTimeout(() => {
+        setShowLegendReturnMessage(false);
+        legendReturnTimerRef.current = null;
+      }, FAB_RETURN_MESSAGE_MS);
+    } else {
+      setShowLegendReturnMessage(false);
+    }
+  }, []);
+
+  const handleLegendReturnDismiss = useCallback(() => {
+    if (legendReturnTimerRef.current !== null) {
+      window.clearTimeout(legendReturnTimerRef.current);
+      legendReturnTimerRef.current = null;
+    }
+    setShowLegendReturnMessage(false);
+    legendRef.current?.resetPosition();
+  }, []);
 
   /** Показывает snackbar об ошибке геолокации (MAP-005 §4) и автоматически
    *  скрывает его через несколько секунд. Повторное нажатие кнопки
@@ -297,6 +371,7 @@ export function MapScreenView({
   useEffect(
     () => () => {
       if (locationNoticeTimerRef.current !== null) window.clearTimeout(locationNoticeTimerRef.current);
+      if (returnMessageTimerRef.current !== null) window.clearTimeout(returnMessageTimerRef.current);
     },
     [],
   );
@@ -910,9 +985,10 @@ export function MapScreenView({
           </div>
         )}
 
-        {/* Плавающая панель действий: белая поверхность, чтобы иконки не
-            сливались с картой; кнопки равноудалены (gap = --space-sm). */}
-        <div className="gm-map-fab-panel">
+        {/* Плавающая панель действий: свёрнута (три точки) по умолчанию,
+            раскрывается по клику. Хвостик-«下手» (серый, нижний правый угол)
+            позволяет перетаскивать панель; позиция сохраняется в localStorage. */}
+        <MapFabPanel ref={fabPanelRef} onReturnRequest={handleFabReturnRequest}>
           <MapFabButton
             label="Отключение мест"
             icon={mapState.hideMapPois ? "🗺️" : "🏙️"}
@@ -945,12 +1021,10 @@ export function MapScreenView({
             onClick={theme.toggleContrast}
             testId="toggle-contrast"
           />
-        </div>
+        </MapFabPanel>
 
-        {/* Нижний левый угол: кнопка «Убрать маршрут» (MAP-020) и легенда
-            статусов маркеров. Оба элемента в одном flex-контейнере: кнопка
-            ВСЕГДА выше легенды (порядок в DOM), когда маршрут построен или
-            строится; без маршрута остаётся только легенда. */}
+        {/* Нижний левый угол: кнопка «Убрать маршрут» (MAP-020).
+            Легенда статусов — отдельный перемещаемый элемент (MapLegend). */}
         <div className="gm-map-bottom-left">
           {mapState.route.status !== 'idle' && (
             <button
@@ -963,24 +1037,11 @@ export function MapScreenView({
               <span className="gm-map-route-clear__text">Убрать маршрут</span>
             </button>
           )}
-          {/* Легенда статусов: зелёный — открыто, красный — закрыто, серый —
-              неизвестно. Без заголовка «Легенда» (подпись не нужна). Квадраты
-              декоративные (aria-hidden) — текст читается скринридером. */}
-          <div className="gm-map-legend" data-testid="map-legend">
-            <div className="gm-map-legend__item">
-              <span className="gm-map-legend__swatch gm-map-legend__swatch--open" aria-hidden="true" />
-              <span>Открыто сейчас</span>
-            </div>
-            <div className="gm-map-legend__item">
-              <span className="gm-map-legend__swatch gm-map-legend__swatch--closed" aria-hidden="true" />
-              <span>Закрыто сейчас</span>
-            </div>
-            <div className="gm-map-legend__item">
-              <span className="gm-map-legend__swatch gm-map-legend__swatch--unknown" aria-hidden="true" />
-              <span>Статус неизвестен</span>
-            </div>
-          </div>
         </div>
+
+        {/* Легенда статусов маркеров: зелёный — открыто, красный — закрыто,
+            серый — неизвестно. Сворачиваемая и перемещаемая (левый нижний угол). */}
+        <MapLegend ref={legendRef} onReturnRequest={handleLegendReturnRequest} />
 
         {/* Сбой загрузки точек торговли (замечание №1): вместо молчаливо
             пустой карты — заметный баннер с кнопкой «Повторить» (повтор
@@ -1183,6 +1244,26 @@ export function MapScreenView({
           <Snackbar tone="error" data-testid="location-error-snackbar">
             {locationNotice === 'no-permission' ? 'Нет доступа к геолокации' : 'Не удалось определить местоположение'}
           </Snackbar>
+        </SnackbarContainer>
+      )}
+
+      {showReturnMessage && (
+        <SnackbarContainer>
+          <div onClick={handleFabReturnDismiss} style={{ cursor: 'pointer' }} role="button" data-testid="fab-return-snackbar">
+            <Snackbar tone="error">
+              Нажмите, чтобы вернуть
+            </Snackbar>
+          </div>
+        </SnackbarContainer>
+      )}
+
+      {showLegendReturnMessage && (
+        <SnackbarContainer>
+          <div onClick={handleLegendReturnDismiss} style={{ cursor: 'pointer' }} role="button" data-testid="legend-return-snackbar">
+            <Snackbar tone="error">
+              Нажмите, чтобы вернуть
+            </Snackbar>
+          </div>
         </SnackbarContainer>
       )}
 
